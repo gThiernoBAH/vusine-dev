@@ -1,0 +1,29 @@
+fastapi==0.136.3
+uvicorn==0.48.0
+sqlalchemy==2.0.50
+psycopg2-binary==2.9.12
+pydantic==2.13.4
+pydantic-settings==2.14.1
+email-validator==2.3.0
+python-dotenv==1.2.2
+bcrypt==5.0.0
+python-dateutil==2.9.0.post0
+APScheduler==3.11.2
+requests==2.34.2
+pytest==9.0.3
+pytest-asyncio==1.4.0
+
+# --- Chantier Labo (F7 prévision, F8 plan optimisé, exports) ---
+pulp==2.9.0
+prophet==1.1.6
+# *** AJOUT 2026-09-23 *** : cmdstanpy 1.3.0 rejette le cmdstan allégé embarqué par
+# prophet 1.1.6 (stan_model/cmdstan-2.33.1, livré sans makefile) -> Prophet échoue à
+# 100 % ("'Prophet' object has no attribute 'stan_backend'") et F7 bascule en silence
+# sur la moyenne mobile. Version validée le 23/09 par un fit réel. Ne pas monter
+# cmdstanpy sans monter prophet en même temps, puis refaire le test de fit.
+cmdstanpy==1.2.5
+pandas==2.2.3
+# anthropic retiré le 23/09 : F4 passe par OpenRouter (requests, déjà listé ci-dessus).
+# openpyxl et reportlab sont déjà utilisés par export_service.py existant -- vérifier
+# leur présence dans l'environnement réel avant de les ajouter en double ici.
+# Pas besoin de cmdstanpy.install_cmdstan() : prophet utilise le cmdstan qu'il embarque.
