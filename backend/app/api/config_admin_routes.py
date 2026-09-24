@@ -9,12 +9,12 @@ from ..core.database import get_db
 from ..core.models import User
 from ..models.production import (
     Equipement, AffectationEquipementLigne, AffectationLigne, LigneCache, CauseArret,
-    ConfigurationPoste, JourSpecial,
+    ConfigurationPoste, JourSpecial, ProduitCache,
 )
 from ..schemas.admin import (
     EquipementCreate, EquipementUpdate, EquipementAdminOut,
     AffectationEquipementCreate, AffectationPersonnelCreate, AffectationOut,
-    CauseArretCreate, CauseArretUpdate,
+    CauseArretCreate, CauseArretUpdate, CauseArretAdminOut,
 )
 from ..schemas.entities import CauseArretOut
 from .auth_routes import require_permission
@@ -231,7 +231,7 @@ def list_affectations_personnel(user_id: int, db: Session = Depends(get_db), _us
 # CAUSES D'ARRÊT
 # =============================================================
 
-@router.get("/causes-arret", response_model=list[CauseArretOut])
+@router.get("/causes-arret", response_model=list[CauseArretAdminOut])
 def list_causes_arret_admin(db: Session = Depends(get_db), _user: User = Depends(require_permission("view_parametrage"))):
     """Toutes les causes, y compris désactivées (contrairement à GET /entities/causes-arret,
     qui ne montre que celles actives, pour le menu déroulant tablette)."""
@@ -243,7 +243,7 @@ def create_cause_arret(payload: CauseArretCreate, db: Session = Depends(get_db),
     existante = db.query(CauseArret).filter(CauseArret.libelle == payload.libelle).first()
     if existante:
         raise HTTPException(status_code=400, detail="Cette cause existe déjà.")
-    cause = CauseArret(libelle=payload.libelle, ordre_affichage=payload.ordre_affichage)
+    cause = CauseArret(libelle=payload.libelle, ordre_affichage=payload.ordre_affichage, imputable_equipe=payload.imputable_equipe)
     db.add(cause)
     db.commit()
     db.refresh(cause)
@@ -413,3 +413,53 @@ def delete_jour_special(jour_id: int, db: Session = Depends(get_db), _user: User
         raise HTTPException(status_code=404, detail="Jour spécial introuvable.")
     db.delete(jour)
     db.commit()
+
+
+# =============================================================
+# *** AJOUT 2026-09-24 (Palier 0, coût des pertes) *** : valeur d'une pièce par produit.
+# Sert à valoriser les arrêts en FCFA (cf. pertes_service.py). Un produit sans valeur
+# propre retombe sur le paramètre global valeur_piece_defaut_fcfa. Seuls les produits
+# finis confirmés sont listés -- les autres (matières, semi-finis insérés à la volée
+# pour satisfaire une FK) n'ont jamais de coût de perte de production.
+# =============================================================
+
+class ProduitValeurOut(BaseModel):
+    id: int
+    nom: str
+    default_code: Optional[str] = None
+    valeur_unitaire_fcfa: Optional[float] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ProduitValeurUpdate(BaseModel):
+    # None = retirer la valeur propre (le produit retombe sur la valeur par défaut).
+    valeur_unitaire_fcfa: Optional[float] = None
+
+
+@router.get("/produits-valeur", response_model=list[ProduitValeurOut])
+def list_produits_valeur(db: Session = Depends(get_db), _user: User = Depends(require_permission("view_parametrage"))):
+    return (
+        db.query(ProduitCache)
+        .filter(ProduitCache.confirme_produit_fini.is_(True))
+        .order_by(ProduitCache.nom)
+        .all()
+    )
+
+
+@router.patch("/produits/{produit_id}/valeur", response_model=ProduitValeurOut)
+def update_produit_valeur(
+    produit_id: int, payload: ProduitValeurUpdate,
+    db: Session = Depends(get_db), _user: User = Depends(require_permission("view_parametrage")),
+):
+    produit = db.query(ProduitCache).filter(ProduitCache.id == produit_id).first()
+    if not produit:
+        raise HTTPException(status_code=404, detail="Produit introuvable.")
+    valeur = payload.valeur_unitaire_fcfa
+    if valeur is not None and (valeur < 0 or valeur != valeur):  # négatif ou NaN
+        raise HTTPException(status_code=422, detail="La valeur doit être un nombre positif ou nul.")
+    produit.valeur_unitaire_fcfa = valeur
+    db.commit()
+    db.refresh(produit)
+    return produit

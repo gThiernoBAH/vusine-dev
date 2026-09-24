@@ -25,29 +25,43 @@ INSERT INTO params (key, value) VALUES
     ('seuil_vert_pct', '95'),
     ('seuil_orange_pct', '80'),
     ('seuil_silence_scan_minutes', '30'),
-    ('duree_demarrage_min', '10')
+    ('duree_demarrage_min', '10'),
+    -- *** AJOUT 2026-09-24 (coût des pertes, Palier 0) *** : valeur par défaut d'une pièce
+    -- en FCFA, utilisée quand un produit n'a pas de valeur propre. 0 = non configurée :
+    -- les coûts s'affichent « n/d » plutôt qu'un chiffre inventé. Le libellé dit ce que
+    -- cette valeur représente (prix de vente, coût de revient, marge...) et est repris
+    -- tel quel dans les écrans et exports.
+    ('valeur_piece_defaut_fcfa', '0'),
+    ('libelle_valeur_piece', 'Prix de vente unitaire'),
+    -- *** AJOUT 2026-09-24 (Palier 1) *** : temps de marche minimal (minutes) avant
+    -- d'afficher la prévision de fin de poste (projection linéaire).
+    ('prevision_delai_min', '60'),
+    -- *** AJOUT 2026-09-24 (Palier 1) *** : cible de TRS (%) affichée comme repère dans
+    -- Rapports > TRS. 85 % est la référence « classe mondiale » usuelle -- à adapter.
+    ('trs_cible_pct', '85'),
+    -- *** AJOUT 2026-09-24 (Palier 1) *** : changements de série (SMED). Objectif en minutes
+    -- (0 = pas d'objectif, aucun changement n'est alors marqué « dépassé »), et libellé de la
+    -- cause d'arrêt qui désigne un changement de série sur la tablette.
+    ('smed_objectif_min', '0'),
+    ('cause_changement_produit', 'Changement produit'),
+    -- *** AJOUT 2026-09-24 (Palier 1) *** : rapport matinal. Heure d'envoi (HH:MM) et jours de
+    -- la semaine (1 = lundi ... 7 = dimanche). L'activation du job est dans .env
+    -- (RAPPORT_MATINAL_ENABLED), pas ici.
+    ('rapport_matinal_heure', '07:00'),
+    ('rapport_matinal_jours', '1,2,3,4,5,6'),
+    -- *** AJOUT 2026-09-24 (Palier 2) *** : scoring d'équipe. Sous cet effectif (personnes
+    -- distinctes affectées à la ligne sur la période), le score de la ligne est MASQUÉ : une
+    -- équipe d'une ou deux personnes identifierait quelqu'un. 0 = pas de masquage.
+    ('scoring_equipe_effectif_min', '3')
 ON CONFLICT (key) DO NOTHING;
 
--- --- Compte admin de production -----------------------------------------------------
--- Mot de passe hashé -- identique à celui utilisé jusqu'ici (même hash). Ajuster
--- is_super_admin à la main ensuite si ce compte doit avoir accès au Labo :
---   UPDATE users SET is_super_admin = true WHERE username = 'admin';
-INSERT INTO users (
-    id, username, matricule, password_hash, nom, email, telephone, user_type,
-    categorie_personnel, is_active, is_admin, is_super_admin, departement_id
-) VALUES (
-    1, 'admin', '3318', '$2b$12$yWxhW8.h25AUVWpipO8vOesuCuPryIh0drMS2W0IoypikqbG.45kC',
-    'Admin', 'g.thiernobah@gmail.com', '0708625708', 'direction',
-    'CDI', true, true, true, 1),
-    (2, 'directeur', '1111', '$2b$12$yWxhW8.h25AUVWpipO8vOesuCuPryIh0drMS2W0IoypikqbG.45kC',
-    'Directeur', NULL, NULL, 'direction',
-    'CDI', true, true, false, 1)    
-ON CONFLICT (id) DO NOTHING;
--- *** CORRIGÉ 2026-09-23 *** : email/téléphone du compte 'directeur' passés de '' à NULL.
--- Un email vide ('') faisait échouer GET /auth/users (erreur 500 : UserResponse
--- validait l'email et refusait la chaîne vide) -> écran Personnel inutilisable.
-
-SELECT setval('users_id_seq', (SELECT COALESCE(MAX(id), 1) FROM users));
+-- --- Comptes utilisateurs ----------------------------------------------------------
+-- *** MODIFIÉ 2026-09-24 *** : plus AUCUN compte ni hash de mot de passe dans ce
+-- fichier (il était versionné avec un hash bcrypt réel, un email et un téléphone
+-- personnels). Le premier compte administrateur se crée avec un mot de passe saisi au
+-- moment voulu, jamais écrit dans un fichier :
+--     cd backend && python3 -m scripts.create_admin
+-- reset_vusinedb_dev.sh l'appelle automatiquement à la fin du reset.
 
 -- --- Sections Odoo (product.section) -- 28 sections capturées le 18/09/2026 -------
 -- Une base fraîche a ainsi tout de suite les bons noms/codes, sans attendre le

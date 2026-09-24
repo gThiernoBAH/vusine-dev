@@ -8,6 +8,7 @@ from ..core.settings import settings
 from .snapshot_service import snapshoter_performance_du_jour
 from .odoo_sync_service import synchroniser_tout, synchroniser_historique, OdooSyncError
 from .alertes_engine import executer_cycle_alertes
+from .rapport_matinal_service import envoyer_rapport_matinal
 # *** AJOUTS (chantier Labo) ***
 from .ingestors import (
     labo_eligibilite_ingestor, labo_predict_ingestor, labo_optimize_pp_ingestor,
@@ -62,6 +63,21 @@ def _alertes_job():
         logger.info(f"[ALERTES] Cycle exécuté -- {nb} nouvelle(s) alerte(s) créée(s).")
     except Exception as e:
         logger.error(f"[ALERTES] Échec du cycle d'alertes : {e}", exc_info=True)
+    finally:
+        db.close()
+
+
+def _rapport_matinal_job():
+    """*** AJOUT 2026-09-24 (Palier 1) *** : appelé toutes les 15 min -- c'est
+    envoyer_rapport_matinal qui décide s'il faut envoyer (jour, heure, fenêtre, déjà
+    envoyé), ce qui rattrape un redémarrage du serveur ou un échec SMTP passager."""
+    db = SessionLocal()
+    try:
+        r = envoyer_rapport_matinal(db)
+        if r["envoye"] or r["email_echecs"] or r["telegram_echecs"] or r["raison"] == "tous les envois ont échoué":
+            logger.info(f"[RAPPORT MATINAL] {r}")
+    except Exception as e:
+        logger.error(f"[RAPPORT MATINAL] Échec inattendu : {e}", exc_info=True)
     finally:
         db.close()
 
@@ -144,6 +160,10 @@ def start_scheduler():
         _alertes_job, IntervalTrigger(minutes=ALERTES_INTERVALLE_MINUTES), id="cycle_alertes_periodique",
     )
     logger.info(f"[SCHEDULER] Cycle d'alertes planifié toutes les {ALERTES_INTERVALLE_MINUTES} min.")
+
+    if settings.RAPPORT_MATINAL_ENABLED:
+        _scheduler.add_job(_rapport_matinal_job, IntervalTrigger(minutes=15), id="rapport_matinal")
+        logger.info("[SCHEDULER] Rapport matinal : contrôle toutes les 15 min (envoi à l'heure configurée).")
 
     if settings.ODOO_SYNC_SCHEDULER_ENABLED:
         _scheduler.add_job(

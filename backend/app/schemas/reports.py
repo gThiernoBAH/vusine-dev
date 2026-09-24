@@ -84,9 +84,154 @@ class HistoriqueScanOut(BaseModel):
     quantite_totale: int
     complete: bool
     motif_partielle: Optional[str] = None
+    nb_rebuts: int = 0
     operateur_id: int
     operateur_nom: str
     operateur_matricule: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
+# =============================================================
+# *** AJOUT 2026-09-24 (Palier 0) *** : Pareto des causes d'arrêt, avec coût estimé.
+# =============================================================
+
+class ParetoLigneOut(BaseModel):
+    ligne_id: int
+    ligne_code: str
+    duree_min: int
+    nb_arrets: int
+    cout_fcfa: Optional[int] = None  # None = non valorisable (planning ou valeur manquants)
+
+
+class ParetoEquipementOut(BaseModel):
+    equipement: str  # « Non précisé » quand l'arrêt ne pointe aucune machine (ex. Manque MP)
+    duree_min: int
+    nb_arrets: int
+
+
+class ParetoCauseOut(BaseModel):
+    rang: int
+    cause_id: int
+    cause: str
+    duree_min: int
+    nb_arrets: int
+    pct: float          # part de cette cause dans la durée totale d'arrêt
+    pct_cumule: float   # cumul, dans l'ordre décroissant -- la courbe de Pareto
+    cout_fcfa: Optional[int] = None
+    minutes_non_valorisees: int = 0
+    par_ligne: list[ParetoLigneOut] = []
+    par_equipement: list[ParetoEquipementOut] = []
+
+
+class ParetoArretsOut(BaseModel):
+    date_debut: date_type
+    date_fin: date_type
+    total_duree_min: int
+    total_nb_arrets: int
+    total_cout_fcfa: Optional[int] = None
+    minutes_non_valorisees: int = 0
+    # True si au moins une valeur de pièce est renseignée (globale ou par produit) --
+    # sinon l'écran invite à la configurer plutôt que d'afficher des « n/d » partout.
+    valorisation_configuree: bool = False
+    libelle_valeur: str = "Valeur unitaire"
+    # Arrêts jamais clôturés : comptés jusqu'à la fin de la période demandée (ou jusqu'à
+    # maintenant), donc à vérifier -- une saisie oubliée gonfle la durée.
+    nb_arrets_non_clotures: int = 0
+    causes: list[ParetoCauseOut] = []
+
+
+# =============================================================
+# *** AJOUT 2026-09-24 (Palier 1) *** : TRS décomposé (disponibilité x performance x qualité).
+# =============================================================
+
+class TrsLigneOut(BaseModel):
+    ligne_id: Optional[int] = None   # None pour la ligne de total « USINE »
+    code: str
+    nom: str
+    jours: int                        # jours complets pris en compte (planning > 0, poste ouvert)
+    qte_planifiee: int
+    production_conforme: int          # pièces conformes palettisées (= quantite_totale)
+    rebuts: int
+    minutes_arret: int                # minutes d'arrêt PENDANT les heures de poste
+    disponibilite_pct: Optional[float] = None
+    performance_pct: Optional[float] = None
+    qualite_pct: Optional[float] = None
+    trs_pct: Optional[float] = None
+    # Décomposition en PIÈCES de l'écart entre le planifié et le conforme :
+    # planifié - conforme = arrêts + cadence + rebuts (à l'arrondi près).
+    pertes_arrets_pieces: int = 0
+    pertes_cadence_pieces: int = 0    # négatif = la ligne a dépassé sa cadence de référence
+    pertes_rebuts_pieces: int = 0
+
+
+class TrsJourOut(BaseModel):
+    jour: date_type
+    trs_pct: Optional[float] = None
+    disponibilite_pct: Optional[float] = None
+    performance_pct: Optional[float] = None
+    qualite_pct: Optional[float] = None
+
+
+class TrsOut(BaseModel):
+    date_debut: date_type
+    date_fin: date_type
+    cible_pct: float                  # paramètre trs_cible_pct (défaut 85)
+    nb_jours: int                     # jours complets pris en compte
+    jour_en_cours_exclu: bool = False # le jour d'aujourd'hui, poste non terminé, n'est pas compté
+    # False tant qu'aucun rebut n'a été déclaré sur la période : la Qualité affichée (100 %)
+    # serait alors un défaut, pas une mesure -- l'écran doit le dire.
+    qualite_renseignee: bool = False
+    # Pièces palettisées un jour TERMINÉ sans planning pour la ligne, ou un jour fermé : hors
+    # TRS, signalées pour que l'écart soit visible. Le jour en cours n'est jamais compté ici.
+    pieces_hors_planning: int = 0
+    usine: TrsLigneOut
+    lignes: list[TrsLigneOut] = []
+    evolution: list[TrsJourOut] = []
+
+
+# =============================================================
+# *** AJOUT 2026-09-24 (Palier 1) *** : chronométrage des changements de série (SMED).
+# =============================================================
+
+class SmedChangementOut(BaseModel):
+    ligne_id: int
+    ligne_code: str
+    jour: date_type
+    produit_avant: str
+    produit_apres: str
+    dernier_scan_avant: datetime
+    premier_scan_apres: datetime
+    # Écart entre le dernier scan du produit A et le premier scan du produit B, hors pause
+    # et hors heures de poste. C'est une BORNE HAUTE du vrai changement : il inclut le
+    # temps de remplissage de la première palette du produit B.
+    ecart_scans_min: int
+    # Temps déclaré sur la tablette (arrêts « Changement produit ») dans cet intervalle ;
+    # None si aucun arrêt de cette cause ne le recoupe.
+    arret_declare_min: Optional[int] = None
+    au_dessus_objectif: bool = False
+
+
+class SmedLigneOut(BaseModel):
+    ligne_id: int
+    ligne_code: str
+    nb_changements: int
+    moyenne_min: int
+    mediane_min: int
+    meilleur_min: int
+    pire_min: int
+    moyenne_declaree_min: Optional[int] = None
+
+
+class SmedOut(BaseModel):
+    date_debut: date_type
+    date_fin: date_type
+    objectif_min: Optional[int] = None   # paramètre smed_objectif_min (0 = pas d'objectif)
+    nb_changements: int
+    moyenne_min: Optional[int] = None
+    mediane_min: Optional[int] = None
+    meilleur_min: Optional[int] = None
+    nb_au_dessus_objectif: int = 0
+    lignes: list[SmedLigneOut] = []
+    changements: list[SmedChangementOut] = []

@@ -9,6 +9,25 @@ const DEFINITIONS = [
   { key: 'seuil_orange_pct', label: 'Seuil orange', suffix: '%', hint: 'En dessous, la ligne passe rouge (Retard critique).' },
   { key: 'seuil_silence_scan_minutes', label: 'Silence de scan', suffix: 'min', hint: "Alerte déclenchée si aucune palette scannée depuis ce délai." },
   { key: 'duree_demarrage_min', label: 'Fenêtre de démarrage', suffix: 'min', hint: "Délai après le début de poste/OF pendant lequel une ligne n'est jamais jugée rouge/orange (pourcentage pas encore significatif)." },
+  // *** AJOUT 2026-09-24 (Palier 0, coût des pertes) *** : valorisation des arrêts en FCFA.
+  { key: 'valeur_piece_defaut_fcfa', label: "Valeur par défaut d'une pièce", suffix: 'FCFA', min: 0, step: 'any',
+    hint: "Utilisée quand un produit n'a pas de valeur propre (Administration → Valeur des produits). 0 = non configurée : les coûts s'affichent « n/d »." },
+  { key: 'libelle_valeur_piece', label: 'Ce que représente cette valeur', suffix: '', type: 'text',
+    hint: "Libellé repris dans les écrans et exports (ex. « Prix de vente unitaire », « Coût de revient unitaire », « Marge unitaire »)." },
+  // *** AJOUT 2026-09-24 (Palier 1) *** : prévision de fin de poste, TRS, SMED, rapport matinal.
+  // Une valeur vide = la valeur par défaut indiquée dans l'aide s'applique.
+  { key: 'prevision_delai_min', label: 'Délai avant prévision de fin de poste', suffix: 'min', min: 5, step: 'any',
+    hint: "Temps de marche minimal avant d'afficher la prévision de fin de poste (projection linéaire de la cadence). Plus court = prévision plus instable. Défaut : 60." },
+  { key: 'trs_cible_pct', label: 'Cible de TRS', suffix: '%', min: 0, step: 'any',
+    hint: "Repère de Rapports → TRS : vert si atteint, orange jusqu'à 15 points en dessous, rouge sinon. Défaut : 85." },
+  { key: 'smed_objectif_min', label: 'Objectif de changement de série', suffix: 'min', min: 0, step: 'any',
+    hint: "Les changements dont l'écart entre scans dépasse cette durée sont signalés en rouge. 0 = pas d'objectif. Défaut : 0." },
+  { key: 'cause_changement_produit', label: 'Cause « changement de série »', suffix: '', type: 'text',
+    hint: "Libellé exact de la cause d'arrêt (Administration → Causes d'arrêt) qui désigne un changement de série. Défaut : « Changement produit »." },
+  { key: 'rapport_matinal_heure', label: 'Heure du rapport matinal', suffix: '', type: 'text',
+    hint: "Format HH:MM. L'envoi automatique doit aussi être activé côté serveur (RAPPORT_MATINAL_ENABLED). Défaut : 07:00." },
+  { key: 'rapport_matinal_jours', label: 'Jours du rapport matinal', suffix: '', type: 'text',
+    hint: "Numéros des jours d'envoi séparés par des virgules : 1 = lundi … 7 = dimanche. Défaut : 1,2,3,4,5,6." },
 ]
 
 const params = ref(DEFINITIONS.map(d => ({ ...d, valeur: '', valeurOriginale: '', enregistrement: false })))
@@ -39,7 +58,10 @@ async function enregistrer(p) {
   p.enregistrement = true
   successMessage.value = ''
   try {
-    await apiClient.patch('/auth/params', { key: p.key, value: p.valeur })
+    // CORRIGÉ 2026-09-24 : un champ type="number" donne un NOMBRE à v-model (Vue le convertit), or
+    // PATCH /auth/params attend une chaîne (schemas.ParamUpdate.value: str) -> 422 à chaque
+    // enregistrement d'un paramètre numérique. Défaut présent dans la version d'origine.
+    await apiClient.patch('/auth/params', { key: p.key, value: String(p.valeur ?? '') })
     p.valeurOriginale = p.valeur
     successMessage.value = `${p.label} mis à jour.`
   } catch (e) {
@@ -53,8 +75,8 @@ async function enregistrer(p) {
 <template>
   <div class="parametres-admin">
     <p class="hint">
-      Seuils utilisés par le calcul de performance et le moteur d'alertes. Réservé aux
-      comptes administrateur.
+      Seuils utilisés par le calcul de performance et le moteur d'alertes, et valeur d'une
+      pièce pour estimer le coût des arrêts. Réservé aux comptes administrateur.
     </p>
 
     <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
@@ -68,7 +90,8 @@ async function enregistrer(p) {
           <div class="param-hint">{{ p.hint }}</div>
         </div>
         <div class="param-input-wrap">
-          <input v-model="p.valeur" type="number" class="param-input" />
+          <input v-model="p.valeur" :type="p.type || 'number'" :min="p.min" :step="p.step"
+                 :class="['param-input', { 'param-input-texte': p.type === 'text' }]" />
           <span class="param-suffix">{{ p.suffix }}</span>
         </div>
         <button
@@ -109,7 +132,8 @@ async function enregistrer(p) {
   width: 80px; height: 36px; padding: 0 var(--space-2); border: 1px solid var(--color-border);
   border-radius: var(--radius-md); font-size: var(--font-size-sm); text-align: right;
 }
-.param-suffix { font-size: var(--font-size-xs); color: var(--color-text-muted); width: 24px; }
+.param-input-texte { width: 220px; text-align: left; }
+.param-suffix { font-size: var(--font-size-xs); color: var(--color-text-muted); min-width: 24px; }
 
 .btn {
   height: 36px; border: none; border-radius: var(--radius-md); padding: 0 var(--space-4);

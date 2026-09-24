@@ -73,6 +73,7 @@ def valider_palette(
         quantite_totale=quantite_totale,
         complete=payload.complete,
         motif_partielle=payload.motif_partielle,
+        nb_rebuts=payload.nb_rebuts,
         operateur_id=current_user.id,
     )
     db.add(palette)

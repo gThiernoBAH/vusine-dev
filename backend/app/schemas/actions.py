@@ -20,6 +20,9 @@ class PaletteCreate(BaseModel):
     # Motif de palette partielle (slide 6 du CDC, jamais câblé jusqu'ici côté saisie) --
     # optionnel, pertinent seulement si complete=False.
     motif_partielle: Optional[str] = Field(None, max_length=100)
+    # *** AJOUT 2026-09-24 (Palier 1, TRS) *** : pièces rebutées pendant le remplissage de
+    # cette palette, hors quantité de la palette -- optionnel, 0 par défaut.
+    nb_rebuts: int = Field(0, ge=0, le=1_000_000)
 
 
 class PaletteUpdate(BaseModel):
@@ -30,6 +33,7 @@ class PaletteUpdate(BaseModel):
     nb_cartons: Optional[int] = Field(None, gt=0)
     colisage_carton: Optional[int] = Field(None, gt=0)
     numero_lot: Optional[str] = Field(None, min_length=1, max_length=50)
+    nb_rebuts: Optional[int] = Field(None, ge=0, le=1_000_000)  # 2026-09-24 : corrigeable, tracé comme le reste
     motif: Optional[str] = None  # motif de LA correction elle-même (journal d'audit)
 
 
@@ -45,6 +49,7 @@ class PaletteOut(BaseModel):
     quantite_totale: int
     complete: bool
     motif_partielle: Optional[str] = None
+    nb_rebuts: int = 0
     operateur_id: int
     created_at: datetime
 

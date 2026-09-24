@@ -6,11 +6,12 @@ from sqlalchemy.orm import Session
 
 from ..core.database import get_db
 from ..core.models import User
-from ..models.production import LigneCache, Arret, Palette, PerformanceLigneJour
+from ..models.production import LigneCache, Arret, Palette, PerformanceLigneJour, ProduitCache
 from ..schemas.dashboard import (
     LignePerformanceOut, VueUsineResume, VueUsineOut, ArretJourOut, LigneDetailPerformanceOut,
+    AndonLigneOut, AndonOut,
 )
-from .auth_routes import get_current_user, require_permission
+from .auth_routes import get_current_user, require_permission, require_andon
 from ..services.ligne_helpers import get_planning_du_jour
 from ..services.performance_service import calculer_performance_ligne
 
@@ -33,7 +34,7 @@ def _ligne_perf_out(db: Session, ligne: LigneCache, jour: date) -> LignePerforma
             id=ligne.id, code=ligne.code, nom=ligne.nom, section_nom=ligne.section_nom,
             reel=perf["reel"], theorique=perf["theorique"], performance_pct=perf["performance_pct"],
             retard_min=perf["retard_min"], statut=perf["statut"],
-            prevision_fin_poste=perf.get("prevision_fin_poste"),
+            prevision_fin_poste=perf.get("prevision_fin_poste"), objectif_jour=perf.get("objectif_jour"),
         )
 
     snap = (
@@ -172,3 +173,80 @@ def get_ligne_performance_detail(
     return LigneDetailPerformanceOut(
         ligne=perf_out, arrets_du_jour=arrets_out, nb_palettes_du_jour=nb_palettes_du_jour,
     )
+
+
+# =============================================================
+# *** AJOUT 2026-09-24 (Palier 0) *** : écran Andon -- TV d'atelier.
+# Une seule requête légère, interrogée toutes les ~10 s par l'écran, qui contient TOUT ce
+# qu'il affiche : lecture seule, aucune interaction. Accessible au compte « kiosque »
+# (seule route qu'il peut appeler, cf. auth_routes.get_current_user) et aux comptes
+# direction autorisés à voir la Vue Usine (aperçu). Un compte avec section_scope
+# (Chef d'équipe, ou kiosque d'un seul atelier) ne voit que sa section.
+# =============================================================
+
+# Les problèmes d'abord : c'est le principe même d'un Andon.
+_ORDRE_STATUT_ANDON = {"arret": 0, "rouge": 1, "orange": 2, "demarrage": 3, "vert": 4, "inactif": 5}
+
+
+def _libelle_produits_du_jour(db: Session, items) -> Optional[str]:
+    """« Produit A » ou « Produit A +1 » (plusieurs produits planifiés le même jour)."""
+    ids = [i.produit_id for i in items if i.produit_id]
+    if not ids:
+        return None
+    nom = db.query(ProduitCache.nom).filter(ProduitCache.id == ids[0]).scalar()
+    if not nom:
+        return None
+    return nom if len(ids) == 1 else f"{nom} +{len(ids) - 1}"
+
+
+@router.get("/andon", response_model=AndonOut)
+def get_andon(db: Session = Depends(get_db), user: User = Depends(require_andon)):
+    jour = date.today()
+    maintenant = datetime.now()
+    query = db.query(LigneCache).filter(LigneCache.actif.is_(True))
+    if user.section_scope:
+        query = query.filter(LigneCache.section_nom == user.section_scope)
+    lignes = query.order_by(LigneCache.code).all()
+    ids = [l.id for l in lignes]
+
+    # Arrêts en cours, en une seule requête (le plus récent par ligne).
+    arrets_ouverts: dict[int, Arret] = {}
+    if ids:
+        for a in db.query(Arret).filter(Arret.ligne_id.in_(ids), Arret.heure_fin.is_(None)).order_by(Arret.heure_debut):
+            arrets_ouverts[a.ligne_id] = a
+
+    sorties: list[AndonLigneOut] = []
+    compteurs = {"vert": 0, "orange": 0, "rouge": 0, "arret": 0}
+    total_reel = total_theorique = 0
+    for ligne in lignes:
+        perf = _ligne_perf_out(db, ligne, jour)
+        items = get_planning_du_jour(db, ligne.id, jour)
+        arret = arrets_ouverts.get(ligne.id)
+        sortie = AndonLigneOut(
+            id=ligne.id, code=ligne.code, nom=ligne.nom, section_nom=ligne.section_nom,
+            statut=perf.statut, reel=perf.reel, theorique=perf.theorique,
+            performance_pct=perf.performance_pct, retard_min=perf.retard_min,
+            prevision_fin_poste=perf.prevision_fin_poste, objectif_jour=perf.objectif_jour,
+            produit=_libelle_produits_du_jour(db, items),
+        )
+        if arret:
+            # Un arrêt ouvert prime, même si le statut calculé ne l'a pas (poste fermé...).
+            sortie.statut = "arret"
+            sortie.arret_cause = arret.cause.libelle if arret.cause else "Cause non précisée"
+            sortie.arret_depuis_min = max(0, round((maintenant - arret.heure_debut).total_seconds() / 60))
+            if arret.equipement:
+                sortie.arret_equipement = f"{arret.equipement.type} {arret.equipement.marque or ''}".strip()
+        if sortie.statut in compteurs:
+            compteurs[sortie.statut] += 1
+        total_reel += sortie.reel
+        total_theorique += sortie.theorique or 0
+        sorties.append(sortie)
+
+    sorties.sort(key=lambda l: (_ORDRE_STATUT_ANDON.get(l.statut, 9), l.code))
+    resume = VueUsineResume(
+        total_lignes=len(lignes), lignes_vertes=compteurs["vert"], lignes_orange=compteurs["orange"],
+        lignes_rouges=compteurs["rouge"], lignes_a_larret=compteurs["arret"],
+        total_reel=total_reel, total_theorique=total_theorique,
+        performance_usine_pct=round(total_reel / total_theorique * 100) if total_theorique > 0 else None,
+    )
+    return AndonOut(genere_a=maintenant.isoformat(timespec="seconds"), jour=jour.isoformat(), resume=resume, lignes=sorties)

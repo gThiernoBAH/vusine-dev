@@ -61,6 +61,7 @@ def create_user(db: Session, user_create: schemas.UserCreate) -> Optional[User]:
         email=user_create.email.lower() if user_create.email else None,
         telephone=user_create.telephone,
         departement_id=user_create.departement_id,
+        section_scope=user_create.section_scope,
         # Comptes créés directement par un admin (pas d'auto-inscription publique côté
         # Vusine, contrairement à SIVOX) -- actif immédiatement, pas de validation
         # différée nécessaire.

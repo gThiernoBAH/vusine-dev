@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import apiClient from '@/api/client'
 import { User, Lock, Eye, EyeOff, Factory } from 'lucide-vue-next'
+import { memoriserSessionKiosque } from '@/api/session'
 
 const router = useRouter()
 
@@ -24,11 +25,17 @@ const handleLogin = async () => {
     if (response.data.user) {
       sessionStorage.setItem('user', JSON.stringify(response.data.user))
     }
+    // *** AJOUT 2026-09-24 *** : jeton signé, envoyé ensuite par api/client.js.
+    if (response.data.access_token) {
+      sessionStorage.setItem('token', response.data.access_token)
+      // Compte kiosque (TV d'atelier) : session conservée après redémarrage du navigateur.
+      memoriserSessionKiosque(response.data.user, response.data.access_token, response.data.expires_at)
+    }
     // Même règle que router/index.js::espaceDefaut() -- "direction" -> cockpit,
     // "operateur"/"ouvrier" -> tablette. Le guard beforeEach fera le reste (redirection
     // si l'utilisateur tape /login manuellement une fois déjà connecté, etc.).
     const userType = response.data.user?.user_type
-    router.push(userType === 'direction' ? '/cockpit/vue-usine' : '/operateur')
+    router.push(userType === 'direction' ? '/cockpit/vue-usine' : userType === 'kiosque' ? '/andon' : '/operateur')
   } catch (error) {
     errorMessage.value = error.response?.data?.detail || 'Le serveur Vusine est injoignable.'
   } finally {

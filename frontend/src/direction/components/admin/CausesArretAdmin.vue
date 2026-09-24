@@ -27,6 +27,13 @@ async function toggleActif(cause) {
   charger()
 }
 
+// *** AJOUT 2026-09-24 (Palier 2) *** : « imputable à l'équipe » -- seules les causes cochées comptent
+// contre une équipe dans son score ; toutes les autres sont neutralisées (défaut).
+async function toggleImputable(cause) {
+  await apiClient.patch(`/admin/causes-arret/${cause.id}`, { imputable_equipe: !cause.imputable_equipe })
+  charger()
+}
+
 async function ajouterCause() {
   if (!nouveauLibelle.value) return
   await apiClient.post('/admin/causes-arret', { libelle: nouveauLibelle.value, ordre_affichage: causes.value.length + 1 })
@@ -48,11 +55,20 @@ async function ajouterCause() {
     <ul v-else class="causes-list">
       <li v-for="c in causes" :key="c.id" :class="{ inactive: !c.actif }">
         <span>{{ c.libelle }}</span>
-        <button class="toggle-btn" :class="{ on: c.actif }" @click="toggleActif(c)">
-          {{ c.actif ? 'Active' : 'Désactivée' }}
-        </button>
+        <span class="actions-cause">
+          <button class="toggle-btn imputable" :class="{ on: c.imputable_equipe }" :title="c.imputable_equipe ? 'Cet arrêt compte contre l\'équipe dans son score' : 'Cet arrêt est neutralisé dans le score de l\'équipe'" @click="toggleImputable(c)">
+            {{ c.imputable_equipe ? 'Imputable à l\'équipe' : 'Neutralisé' }}
+          </button>
+          <button class="toggle-btn" :class="{ on: c.actif }" @click="toggleActif(c)">
+            {{ c.actif ? 'Active' : 'Désactivée' }}
+          </button>
+        </span>
       </li>
     </ul>
+    <p class="hint">
+      <strong>Imputable à l'équipe</strong> : seuls les arrêts de ces causes comptent contre une équipe dans son score (par exemple un retard de démarrage).
+      Toutes les autres (panne, manque de matière…) sont <strong>neutralisées</strong> : par défaut, aucun arrêt n'est reproché à une équipe.
+    </p>
     <p class="hint">Une cause désactivée disparaît du menu déroulant "Déclarer un arrêt" côté tablette, sans supprimer l'historique des arrêts déjà enregistrés avec cette cause.</p>
   </div>
 </template>
@@ -95,4 +111,6 @@ async function ajouterCause() {
 .toggle-btn.on { background: var(--color-vert-bg); color: var(--color-vert); border-color: transparent; }
 
 .hint { font-size: var(--font-size-xs); color: var(--color-text-muted); max-width: 480px; margin-top: var(--space-3); }
+.actions-cause { display: inline-flex; gap: var(--space-2); }
+.toggle-btn.imputable.on { background: var(--color-orange-bg); color: #92400E; border-color: var(--color-orange); }
 </style>

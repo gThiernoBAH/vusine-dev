@@ -204,6 +204,13 @@ const lignesFiltrees = computed(() => {
             <span class="metric-value">{{ ligne.retard_min }} min</span>
             <span class="metric-label">Retard</span>
           </div>
+          <!-- *** AJOUT 2026-09-24 (Palier 1) *** : projection linéaire de fin de poste,
+               seulement quand elle est calculable (cf. performance_service). -->
+          <div v-if="ligne.prevision_fin_poste !== null && ligne.prevision_fin_poste !== undefined"
+               :title="'Projection linéaire de la production en fin de poste, si la cadence actuelle se maintient'">
+            <span class="metric-value">{{ ligne.prevision_fin_poste.toLocaleString('fr-FR') }}</span>
+            <span class="metric-label">Fin de poste ≈<template v-if="ligne.objectif_jour"> / {{ ligne.objectif_jour.toLocaleString('fr-FR') }}</template></span>
+          </div>
         </div>
       </button>
       <p v-if="!lignesFiltrees.length" class="empty">Aucune ligne ne correspond à ces filtres.</p>

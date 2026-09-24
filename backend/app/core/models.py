@@ -71,6 +71,14 @@ class User(Base):
     departement_id = Column(Integer, ForeignKey("departements.id"), nullable=True)
     departement = relationship("Departement", back_populates="users")
 
+    # *** AJOUT 2026-09-24 (Palier 1, rapport matinal) *** : canaux de diffusion du rapport --
+    # colonnes qui existaient déjà en base (is_alert_*) mais jamais mappées, plus
+    # telegram_chat_id (nouvelle). Les autres reliquats SIVOX (mailapi, telegramapi...) restent
+    # non mappés.
+    is_alert_mail = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    is_alert_telegram = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    telegram_chat_id = Column(String(50), nullable=True)
+
     created_at = Column(TIMESTAMP(timezone=True), server_default=text("CURRENT_TIMESTAMP"))
     updated_at = Column(
         TIMESTAMP(timezone=True),

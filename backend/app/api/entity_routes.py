@@ -106,13 +106,17 @@ def get_ligne_detail(
         .filter(AffectationLigne.ligne_id == ligne_id, AffectationLigne.date_fin.is_(None))
         .all()
     )
+    # CORRIGÉ 2026-09-24 (Palier 2, « rien de nominatif à l'écran d'atelier ») : cette liste
+    # (noms, matricules, CDI/CDD des collègues) était renvoyée à TOUT compte connecté, opérateurs
+    # compris -- la tablette ne l'affiche pas, mais la donnée circulait. Réservée aux comptes
+    # direction (l'écran détail de ligne du cockpit).
     personnel = [
         PersonnelLigneOut(
             user_id=u.id, nom=u.nom, matricule=u.matricule,
             user_type=u.user_type, categorie_personnel=u.categorie_personnel,
         )
         for u, _affectation in personnel_rows
-    ]
+    ] if current_user.user_type == "direction" else []
 
     return LigneDetailOut(
         ligne=LigneOut.model_validate(ligne),

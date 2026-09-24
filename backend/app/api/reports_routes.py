@@ -4,15 +4,25 @@ from sqlalchemy.orm import Session
 
 from ..core.database import get_db
 from ..core.models import User, UserPermission
-from ..schemas.reports import RapportLigneOut, RapportDirectionOut, RapportProduitOut, HistoriqueScanOut
+from ..schemas.reports import (
+    RapportLigneOut, RapportDirectionOut, RapportProduitOut, HistoriqueScanOut, ParetoArretsOut, TrsOut, SmedOut,
+)
 from ..services.reports_service import (
     rapport_par_ligne, rapport_vue_direction, rapport_par_produit, historique_scans,
 )
+from ..services.pertes_service import pareto_arrets
+from ..services.trs_service import calculer_trs
+from ..services.smed_service import changements_de_serie
+from ..services import rapport_matinal_service as matinal
+from ..core.settings import settings
 from ..services.export_service import (
+    generer_excel_pareto, generer_pdf_pareto, generer_csv_pareto,
+    generer_excel_trs, generer_pdf_trs, generer_csv_trs,
+    generer_excel_smed, generer_pdf_smed, generer_csv_smed,
     generer_excel_rapport, generer_pdf_rapport,
     generer_excel_historique_scans, generer_pdf_historique_scans, generer_csv_historique_scans,
 )
-from .auth_routes import require_permission, get_current_user
+from .auth_routes import require_permission, get_current_user, require_admin
 
 router = APIRouter(prefix="/rapports", tags=["rapports"])
 
@@ -163,3 +173,183 @@ def export_historique_scans(
         content=contenu, media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="historique_scans_{date_debut}_{date_fin}.{format}"'},
     )
+
+
+
+# =============================================================
+# *** AJOUT 2026-09-24 (Palier 0) *** : Pareto des causes d'arrêt + coût estimé.
+# Même permission que le reste des Rapports (view_vue_usine). Un Chef d'équipe (compte
+# avec section_scope) ne voit que les lignes de sa section, comme la Vue Usine.
+# NB : les autres onglets de Rapports ne filtrent PAS encore par section_scope --
+# écart préexistant, signalé mais volontairement non touché ici.
+# =============================================================
+
+def _periode_pareto(date_debut, date_fin):
+    date_fin = date_fin or date.today()
+    date_debut = date_debut or (date_fin - timedelta(days=7))
+    if date_debut > date_fin:
+        raise HTTPException(status_code=422, detail="date_debut doit précéder date_fin.")
+    return date_debut, date_fin
+
+
+@router.get("/pareto-arrets", response_model=ParetoArretsOut)
+def get_pareto_arrets(
+    date_debut: date = None,
+    date_fin: date = None,
+    ligne_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission("view_vue_usine")),
+):
+    date_debut, date_fin = _periode_pareto(date_debut, date_fin)
+    return pareto_arrets(db, date_debut, date_fin, ligne_id=ligne_id, section_scope=user.section_scope)
+
+
+@router.get("/pareto-arrets/export")
+def export_pareto_arrets(
+    format: str,
+    date_debut: date = None,
+    date_fin: date = None,
+    ligne_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission("view_vue_usine")),
+):
+    if format not in ("xlsx", "pdf", "csv"):
+        raise HTTPException(status_code=422, detail="format doit être 'xlsx', 'pdf' ou 'csv'.")
+    date_debut, date_fin = _periode_pareto(date_debut, date_fin)
+    pareto = pareto_arrets(db, date_debut, date_fin, ligne_id=ligne_id, section_scope=user.section_scope)
+
+    if format == "csv":
+        contenu, media_type = generer_csv_pareto(pareto), "text/csv"
+    elif format == "xlsx":
+        contenu = generer_excel_pareto(pareto)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        contenu, media_type = generer_pdf_pareto(pareto), "application/pdf"
+
+    return Response(
+        content=contenu, media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="pareto_arrets_{date_debut}_{date_fin}.{format}"'},
+    )
+
+
+# =============================================================
+# *** AJOUT 2026-09-24 (Palier 1) *** : TRS décomposé (disponibilité x performance x
+# qualité). Même permission et même règle de périmètre (section_scope) que le Pareto.
+# =============================================================
+
+@router.get("/trs", response_model=TrsOut)
+def get_trs(
+    date_debut: date = None,
+    date_fin: date = None,
+    ligne_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission("view_vue_usine")),
+):
+    date_debut, date_fin = _periode_pareto(date_debut, date_fin)
+    return calculer_trs(db, date_debut, date_fin, ligne_id=ligne_id, section_scope=user.section_scope)
+
+
+@router.get("/trs/export")
+def export_trs(
+    format: str,
+    date_debut: date = None,
+    date_fin: date = None,
+    ligne_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission("view_vue_usine")),
+):
+    if format not in ("xlsx", "pdf", "csv"):
+        raise HTTPException(status_code=422, detail="format doit être 'xlsx', 'pdf' ou 'csv'.")
+    date_debut, date_fin = _periode_pareto(date_debut, date_fin)
+    trs = calculer_trs(db, date_debut, date_fin, ligne_id=ligne_id, section_scope=user.section_scope)
+    if format == "csv":
+        contenu, media_type = generer_csv_trs(trs), "text/csv"
+    elif format == "xlsx":
+        contenu = generer_excel_trs(trs)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        contenu, media_type = generer_pdf_trs(trs), "application/pdf"
+    return Response(
+        content=contenu, media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="trs_{date_debut}_{date_fin}.{format}"'},
+    )
+
+
+# =============================================================
+# *** AJOUT 2026-09-24 (Palier 1) *** : changements de série (SMED), depuis les horodatages
+# de palettes -- aucune saisie nouvelle. Même permission et même périmètre que le Pareto.
+# =============================================================
+
+@router.get("/changements-serie", response_model=SmedOut)
+def get_changements_serie(
+    date_debut: date = None,
+    date_fin: date = None,
+    ligne_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission("view_vue_usine")),
+):
+    date_debut, date_fin = _periode_pareto(date_debut, date_fin)
+    return changements_de_serie(db, date_debut, date_fin, ligne_id=ligne_id, section_scope=user.section_scope)
+
+
+@router.get("/changements-serie/export")
+def export_changements_serie(
+    format: str,
+    date_debut: date = None,
+    date_fin: date = None,
+    ligne_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission("view_vue_usine")),
+):
+    if format not in ("xlsx", "pdf", "csv"):
+        raise HTTPException(status_code=422, detail="format doit être 'xlsx', 'pdf' ou 'csv'.")
+    date_debut, date_fin = _periode_pareto(date_debut, date_fin)
+    smed = changements_de_serie(db, date_debut, date_fin, ligne_id=ligne_id, section_scope=user.section_scope)
+    if format == "csv":
+        contenu, media_type = generer_csv_smed(smed), "text/csv"
+    elif format == "xlsx":
+        contenu = generer_excel_smed(smed)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        contenu, media_type = generer_pdf_smed(smed), "application/pdf"
+    return Response(
+        content=contenu, media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="changements_serie_{date_debut}_{date_fin}.{format}"'},
+    )
+
+
+# =============================================================
+# *** AJOUT 2026-09-24 (Palier 1) *** : rapport matinal. Réservé aux administrateurs : le
+# rapport couvre toute l'usine (coûts en FCFA compris), sans le filtre section_scope.
+# =============================================================
+
+@router.get("/matinal/apercu")
+def apercu_rapport_matinal(db: Session = Depends(get_db), _admin: User = Depends(require_admin)):
+    """Le rapport tel qu'il partirait maintenant, sans rien envoyer."""
+    rapport = matinal.construire_rapport(db)
+    dest = matinal.destinataires(db)
+    base = {
+        "nb_destinataires_email": len(dest["email"]), "nb_destinataires_telegram": len(dest["telegram"]),
+        "envoi_automatique_actif": bool(settings.RAPPORT_MATINAL_ENABLED and settings.SNAPSHOT_SCHEDULER_ENABLED),
+    }
+    if rapport is None:
+        return {**base, "disponible": False,
+                "message": "Aucune performance figée dans les 7 derniers jours : le rapport n'a rien à dire."}
+    return {**base, "disponible": True, "jour_rapport": rapport["jour_rapport"].isoformat(),
+            "sujet": matinal.sujet(rapport), "html": matinal.rendre_html(rapport), "texte": matinal.rendre_texte(rapport)}
+
+
+@router.post("/matinal/envoyer")
+def envoyer_rapport_matinal_maintenant(
+    mode: str = "test",
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """mode=test : envoi à VOTRE seule adresse, sans marquer la journée comme envoyée.
+    mode=tous : envoi immédiat à tous les destinataires (hors règles de jour et d'heure),
+    et la journée est marquée envoyée pour éviter un doublon automatique."""
+    if mode not in ("test", "tous"):
+        raise HTTPException(status_code=422, detail="mode doit être 'test' ou 'tous'.")
+    if mode == "test":
+        return matinal.envoyer_rapport_matinal(db, test_user=admin)
+    return matinal.envoyer_rapport_matinal(db, force=True)

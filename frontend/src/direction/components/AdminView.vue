@@ -6,6 +6,8 @@ import CausesArretAdmin from './admin/CausesArretAdmin.vue'
 import LignesAdmin from './admin/LignesAdmin.vue'
 import CalendrierAdmin from './admin/CalendrierAdmin.vue'
 import ParametresAdmin from './admin/ParametresAdmin.vue'
+import ValeurProduitsAdmin from './admin/ValeurProduitsAdmin.vue'
+import RapportMatinalAdmin from './admin/RapportMatinalAdmin.vue'
 
 const TABS = [
   { key: 'lignes', label: 'Lignes' },
@@ -14,6 +16,8 @@ const TABS = [
   { key: 'causes', label: "Causes d'arrêt" },
   { key: 'calendrier', label: 'Calendrier' },
   { key: 'parametres', label: 'Paramètres' },
+  { key: 'valeur_produits', label: 'Valeur des produits' },
+  { key: 'rapport_matinal', label: 'Rapport matinal' },
 ]
 const activeTab = ref('lignes')
 </script>
@@ -42,6 +46,8 @@ const activeTab = ref('lignes')
     <CausesArretAdmin v-else-if="activeTab === 'causes'" />
     <CalendrierAdmin v-else-if="activeTab === 'calendrier'" />
     <ParametresAdmin v-else-if="activeTab === 'parametres'" />
+    <ValeurProduitsAdmin v-else-if="activeTab === 'valeur_produits'" />
+    <RapportMatinalAdmin v-else-if="activeTab === 'rapport_matinal'" />
   </div>
 </template>
 

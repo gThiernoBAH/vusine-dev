@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Factory, LayoutGrid, Users, FileText, AlertTriangle, Settings, LogOut, FlaskConical } from 'lucide-vue-next'
+import { Factory, LayoutGrid, Users, FileText, AlertTriangle, Settings, LogOut, FlaskConical, Tv } from 'lucide-vue-next'
 
 defineProps({
   userNom: { type: String, default: '' },
@@ -16,8 +16,10 @@ const router = useRouter()
 const ITEMS = [
   { key: 'vue_usine', label: 'Vue Usine', icon: LayoutGrid, to: '/cockpit/vue-usine' },
   { key: 'alertes', label: 'Alertes', icon: AlertTriangle, to: '/cockpit/alertes' },
-  { key: 'scoring', label: 'Personnel', icon: Users, to: '/cockpit/scoring' },
+  { key: 'scoring', label: 'Équipes', icon: Users, to: '/cockpit/scoring' },
   { key: 'rapports', label: 'Rapports', icon: FileText, to: '/cockpit/rapports' },
+  // *** AJOUT 2026-09-24 (Palier 0) *** : aperçu de l'écran Andon (TV d'atelier), plein écran.
+  { key: 'andon', label: 'Écran Andon', icon: Tv, to: '/andon' },
 ]
 
 // ligne-detail (/cockpit/lignes/:id) met en surbrillance l'onglet Vue Usine -- même
@@ -34,6 +36,7 @@ const activeKey = computed(() => {
 
 function logout() {
   sessionStorage.removeItem('user')
+  sessionStorage.removeItem('token')
   router.push('/login')
 }
 </script>

@@ -148,6 +148,12 @@ watch(jourSelectionne, () => {
           <div class="metric-value">{{ performance.nb_palettes_du_jour }}</div>
           <div class="metric-label">Palettes du jour</div>
         </div>
+        <!-- *** AJOUT 2026-09-24 (Palier 1) *** : prévision de fin de poste (projection linéaire). -->
+        <div v-if="performance.ligne.prevision_fin_poste !== null && performance.ligne.prevision_fin_poste !== undefined" class="metric-card"
+             title="Projection linéaire : cadence moyenne observée pendant le temps de marche, maintenue jusqu'à la fin du poste">
+          <div class="metric-value">{{ performance.ligne.prevision_fin_poste.toLocaleString('fr-FR') }}</div>
+          <div class="metric-label">Fin de poste ≈<template v-if="performance.ligne.objectif_jour"> / {{ performance.ligne.objectif_jour.toLocaleString('fr-FR') }}</template></div>
+        </div>
       </div>
 
       <!-- *** REVU 2026-09-17 *** : remplace l'ancien bloc "Ordre de fabrication en

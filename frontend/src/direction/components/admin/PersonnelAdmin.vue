@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import apiClient from '@/api/client'
-import { Plus, Pencil, Trash2, KeyRound, Users as UsersIcon, X, Search, ChevronDown, Check, Briefcase, HardHat, Wrench } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, KeyRound, Users as UsersIcon, X, Search, ChevronDown, Check, Briefcase, HardHat, Wrench, Tv } from 'lucide-vue-next'
 import { useConfirm } from '@/composables/useConfirm'
 
 // *** AJOUT (chantier Labo) *** : compte connecté, pour n'afficher le contrôle Admin
@@ -49,7 +49,7 @@ onMounted(chargerTout)
 const recherche = ref('')
 const filtreType = ref('tous')  // 'tous' | 'direction' | 'operateur' | 'ouvrier'
 
-const TYPE_LABELS = { direction: 'Direction', operateur: 'Opérateur', ouvrier: 'Ouvrier' }
+const TYPE_LABELS = { direction: 'Direction', operateur: 'Opérateur', ouvrier: 'Ouvrier', kiosque: 'Écran atelier' }
 
 // *** AJOUT 2026-09-23 *** : boutons de type de compte en tête du formulaire de
 // création (cf. cadrage -- le sélecteur discret d'avant, perdu entre Nom et Mot de
@@ -61,7 +61,13 @@ const TYPES_COMPTE = [
     description: 'Se connecte sur la tablette avec son matricule.' },
   { value: 'ouvrier', label: 'Ouvrier', icone: Wrench,
     description: 'Se connecte sur la tablette avec son matricule.' },
+  // *** AJOUT 2026-09-24 (Palier 0, Andon) *** : compte d'une TV d'atelier.
+  { value: 'kiosque', label: 'Écran atelier', icone: Tv,
+    description: "TV d'atelier (Andon) : lecture seule, session de 30 jours." },
 ]
+
+// Sections (ateliers) connues, déduites des lignes -- périmètre optionnel d'un écran atelier.
+const sections = computed(() => [...new Set(lignes.value.map(l => l.section_nom).filter(Boolean))].sort())
 
 // *** AJOUT 2026-09-23 *** : "Ancien CDI" existe déjà côté modèle (models.User,
 // categorie_personnel) mais manquait dans les deux formulaires -- impossible à
@@ -94,6 +100,7 @@ function defaultCreateForm() {
     userType: 'direction', nom: '', password: '', username: '', matricule: '',
     categoriePersonnel: 'CDI', email: '', telephone: '', departementId: null,
     isAdmin: false,  // *** AJOUT (chantier Labo) ***
+    sectionScope: '',  // *** AJOUT 2026-09-24 *** : écran atelier limité à une section
   }
 }
 const createForm = ref(defaultCreateForm())
@@ -109,7 +116,10 @@ async function creerUtilisateur() {
     telephone: createForm.value.telephone || null,
     departement_id: createForm.value.departementId || null,
   }
-  if (createForm.value.userType === 'direction') {
+  if (createForm.value.userType === 'kiosque') {
+    payload.username = createForm.value.username
+    payload.section_scope = createForm.value.sectionScope || null
+  } else if (createForm.value.userType === 'direction') {
     payload.username = createForm.value.username
     // *** AJOUT (chantier Labo) *** : le backend re-vérifie is_super_admin de toute
     // façon (403 sinon) -- ce garde côté formulaire évite juste d'envoyer le champ
@@ -144,6 +154,9 @@ function ouvrirEdition(u) {
     nom: u.nom, email: u.email || '', telephone: u.telephone || '',
     departementId: u.departement_id, isActive: u.is_active, isAdmin: u.is_admin,
     userType: u.user_type, categoriePersonnel: u.categorie_personnel || '',
+    sectionScope: u.section_scope || '',
+    // *** AJOUT 2026-09-24 (Palier 1) *** : abonnement au rapport matinal.
+    isAlertMail: !!u.is_alert_mail, isAlertTelegram: !!u.is_alert_telegram, telegramChatId: u.telegram_chat_id || '',
   }
   editError.value = ''
 }
@@ -160,6 +173,10 @@ async function enregistrerEdition() {
       is_admin: editForm.value.isAdmin,
       user_type: editForm.value.userType,
       categorie_personnel: editForm.value.categoriePersonnel || null,
+      section_scope: editForm.value.sectionScope || null,
+      is_alert_mail: editForm.value.isAlertMail,
+      is_alert_telegram: editForm.value.isAlertTelegram,
+      telegram_chat_id: editForm.value.telegramChatId.trim() || null,
     })
     utilisateurEnEdition.value = null
     chargerTout()
@@ -340,6 +357,7 @@ async function terminerAffectation(a) {
         <option value="direction">Direction</option>
         <option value="operateur">Opérateur</option>
         <option value="ouvrier">Ouvrier</option>
+        <option value="kiosque">Écran atelier</option>
       </select>
       <span class="result-count">{{ utilisateursFiltres.length }} / {{ utilisateurs.length }}</span>
       <button class="add-btn" @click="showCreateForm = !showCreateForm"><Plus :size="16" /> Nouveau compte</button>
@@ -375,7 +393,7 @@ async function terminerAffectation(a) {
       </div>
 
       <div class="form-row">
-        <label v-if="createForm.userType === 'direction'" class="field">
+        <label v-if="createForm.userType === 'direction' || createForm.userType === 'kiosque'" class="field">
           <span>Identifiant (username)</span>
           <input v-model="createForm.username" type="text" placeholder="ex: mdirection" autocomplete="off" />
         </label>
@@ -391,6 +409,13 @@ async function terminerAffectation(a) {
             </select>
           </label>
         </template>
+        <label v-if="createForm.userType === 'kiosque'" class="field">
+          <span>Atelier affiché</span>
+          <select v-model="createForm.sectionScope">
+            <option value="">Toute l'usine</option>
+            <option v-for="s in sections" :key="s" :value="s">{{ s }}</option>
+          </select>
+        </label>
         <label class="field">
           <span>Département</span>
           <select v-model.number="createForm.departementId">
@@ -444,7 +469,7 @@ async function terminerAffectation(a) {
             <div class="actions-cell">
               <button class="icon-btn" title="Modifier" @click="ouvrirEdition(u)"><Pencil :size="15" /></button>
               <button v-if="u.user_type === 'direction'" class="icon-btn" title="Permissions" @click="ouvrirPermissions(u)"><KeyRound :size="15" /></button>
-              <button v-else class="icon-btn" title="Lignes affectées" @click="ouvrirAffectations(u)"><UsersIcon :size="15" /></button>
+              <button v-else-if="u.user_type !== 'kiosque'" class="icon-btn" title="Lignes affectées" @click="ouvrirAffectations(u)"><UsersIcon :size="15" /></button>
               <button class="icon-btn danger" title="Supprimer" @click="supprimerUtilisateur(u)"><Trash2 :size="15" /></button>
             </div>
           </td>
@@ -469,9 +494,16 @@ async function terminerAffectation(a) {
             <option value="direction">Direction</option>
             <option value="operateur">Opérateur</option>
             <option value="ouvrier">Ouvrier</option>
+            <option value="kiosque">Écran atelier</option>
           </select>
         </label>
-        <label v-if="editForm.userType !== 'direction'" class="field"><span>Catégorie</span>
+        <label v-if="editForm.userType === 'kiosque'" class="field"><span>Atelier affiché</span>
+          <select v-model="editForm.sectionScope">
+            <option value="">Toute l'usine</option>
+            <option v-for="s in sections" :key="s" :value="s">{{ s }}</option>
+          </select>
+        </label>
+        <label v-if="editForm.userType === 'operateur' || editForm.userType === 'ouvrier'" class="field"><span>Catégorie</span>
           <select v-model="editForm.categoriePersonnel">
             <option value="">—</option>
             <option v-for="c in CATEGORIES_PERSONNEL" :key="c" :value="c">{{ c }}</option>
@@ -486,6 +518,18 @@ async function terminerAffectation(a) {
         <label class="field"><span>Email</span><input v-model="editForm.email" type="email" /></label>
         <label class="field"><span>Téléphone</span><input v-model="editForm.telephone" type="text" /></label>
         <label class="checkbox-row"><input type="checkbox" v-model="editForm.isActive" /> Compte actif</label>
+
+        <!-- *** AJOUT 2026-09-24 (Palier 1) *** : abonnement au rapport matinal (email et/ou Telegram). -->
+        <div v-if="editForm.userType !== 'kiosque'" class="rapport-abonnement">
+          <div class="rapport-titre">Rapport matinal</div>
+          <label class="checkbox-row"><input type="checkbox" v-model="editForm.isAlertMail" /> Recevoir par email</label>
+          <p v-if="editForm.isAlertMail && !editForm.email" class="hint-warn">Renseignez l'adresse email ci-dessus, sinon aucun rapport ne sera envoyé.</p>
+          <label class="checkbox-row"><input type="checkbox" v-model="editForm.isAlertTelegram" /> Recevoir par Telegram</label>
+          <label v-if="editForm.isAlertTelegram" class="field"><span>Identifiant du chat Telegram</span>
+            <input v-model="editForm.telegramChatId" type="text" inputmode="numeric" placeholder="ex: 123456789" autocomplete="off" />
+          </label>
+          <p v-if="editForm.isAlertTelegram" class="hint-info">Nombre uniquement. La personne doit d'abord avoir écrit au bot de l'entreprise, sinon Telegram refuse l'envoi.</p>
+        </div>
         <!-- *** AJOUT (chantier Labo) *** : masqué pour tout compte qui n'est pas
              is_super_admin -- même garde côté serveur (auth_routes.update_user_status),
              ce v-if évite un 403 inutile plutôt que d'être le seul rempart. -->
@@ -780,4 +824,8 @@ async function terminerAffectation(a) {
 @media (prefers-reduced-motion: reduce) {
   .type-option { transition: none; }
 }
+.rapport-abonnement { border-top: 1px solid var(--color-border); margin-top: var(--space-3); padding-top: var(--space-3); }
+.rapport-titre { font-weight: 700; margin-bottom: var(--space-2); }
+.hint-warn { color: #92400E; font-size: var(--font-size-xs); margin: 0 0 var(--space-2); }
+.hint-info { color: var(--color-text-muted); font-size: var(--font-size-xs); margin: 0; }
 </style>

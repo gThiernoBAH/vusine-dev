@@ -39,15 +39,26 @@ def arrondir_dataframe(df: pd.DataFrame, decimales: int = 2) -> pd.DataFrame:
     return df
 
 
-def fmt_fr(valeur, decimales: int = 2) -> str:
+def fmt_fr(valeur, decimales: int = 2, fixe: bool = False) -> str:
     """Nombre à la française (espace des milliers, virgule décimale) pour l'affichage
     PDF. Les entiers n'affichent jamais de décimale inutile."""
-    if valeur is None or (isinstance(valeur, float) and pd.isna(valeur)):
+    # pd.NA : valeur manquante des colonnes entières « nullables » (dtype Int64), ajoutées
+    # le 2026-09-24 pour les montants entiers pouvant être absents (ex. coût non calculable).
+    if valeur is None or valeur is pd.NA or (isinstance(valeur, float) and pd.isna(valeur)):
         return "—"
+    # Scalaires numpy (int64, float64, bool_) -> types Python : sans cela, un entier
+    # pandas n'était jamais reconnu par isinstance(int) ci-dessous et s'affichait brut
+    # (« 1234567 » au lieu de « 1 234 567 »). Corrigé le 2026-09-24.
+    if hasattr(valeur, "item"):
+        valeur = valeur.item()
     if isinstance(valeur, bool):
         return "Oui" if valeur else "Non"
     if isinstance(valeur, (int, float)):
         arrondi = round(float(valeur), decimales)
+        if fixe and decimales > 0:
+            # Colonne à décimales déclarées (ex. pourcentages) : toujours le même nombre de
+            # décimales, « 97,0 » et non « 97 » à côté de « 92,2 » (2026-09-24).
+            return f"{arrondi:,.{decimales}f}".replace(",", " ").replace(".", ",")
         if arrondi == int(arrondi):
             return f"{int(arrondi):,}".replace(",", " ")
         texte = f"{arrondi:,.{decimales}f}".rstrip("0").rstrip(".")
@@ -109,7 +120,7 @@ def build_pdf(titre: str, df: pd.DataFrame, sous_titre: str | None = None,
 
     entetes = list(df.columns)
     lignes = [
-        [fmt_fr(v, decimales.get(col, 2)) for col, v in zip(entetes, row)]
+        [fmt_fr(v, decimales.get(col, 2), fixe=decimales.get(col, 0) > 0) for col, v in zip(entetes, row)]
         for row in df.itertuples(index=False, name=None)
     ]
     table = Table([entetes] + lignes, repeatRows=1)

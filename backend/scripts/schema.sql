@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS users (
     nom VARCHAR(100) NOT NULL,
     email VARCHAR(100) UNIQUE,
     telephone VARCHAR(100),
-    user_type VARCHAR(20) NOT NULL DEFAULT 'direction',   -- 'direction' | 'operateur' | 'ouvrier'
+    user_type VARCHAR(20) NOT NULL DEFAULT 'direction',   -- 'direction' | 'operateur' | 'ouvrier' | 'kiosque' (écran d'atelier, 2026-09-24)
     categorie_personnel VARCHAR(20),         -- 'CDI' | 'CDD' | 'Journalier' | 'Ancien CDI' | NULL
     is_active BOOLEAN DEFAULT true,
     is_admin BOOLEAN DEFAULT false,
@@ -71,6 +71,10 @@ CREATE TABLE IF NOT EXISTS users (
     is_alert_telegram BOOLEAN NOT NULL DEFAULT false,
     is_alert_screen BOOLEAN NOT NULL DEFAULT false,
     last_alerts_seen_at TIMESTAMP,
+    -- *** AJOUT 2026-09-24 (Palier 1, rapport matinal) *** : identifiant numérique du chat
+    -- Telegram du destinataire (dédié -- telegramapi, reliquat SIVOX, garde un sens inconnu
+    -- et n'est PAS utilisé). Le rapport n'est envoyé que si is_alert_telegram = true.
+    telegram_chat_id VARCHAR(50),
     -- Rôle Chef d'équipe (CDC slide 16) : si renseigné, restreint la Vue Usine du
     -- compte à cette seule section (comparaison contre lignes_cache.section_nom).
     -- NULL = accès complet (comptes Production/Administrateur).
@@ -132,6 +136,13 @@ CREATE TABLE IF NOT EXISTS produits_cache (
     -- "à la volée" par sync_of/sync_cadence pour satisfaire une contrainte FK -- jamais
     -- confirmé comme un vrai produit fini. Ne bascule jamais de True à False.
     confirme_produit_fini BOOLEAN NOT NULL DEFAULT false,
+    -- *** AJOUT 2026-09-24 (coût des pertes, Palier 0) *** : valeur d'UNE pièce en FCFA,
+    -- saisie à la main (Administration > Valeur des produits) -- JAMAIS écrasée par la
+    -- synchro Odoo (sync_produits ne touche que ses propres colonnes). NULL = pas de
+    -- valeur propre : on retombe sur le paramètre global valeur_piece_defaut_fcfa. Ce que
+    -- « valeur » représente (prix de vente, coût de revient, marge...) est un choix
+    -- d'usage, pas de structure : cf. paramètre libelle_valeur_piece.
+    valeur_unitaire_fcfa NUMERIC,
     synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS ix_produits_cache_default_code ON produits_cache (default_code);
@@ -259,7 +270,12 @@ CREATE TABLE IF NOT EXISTS causes_arret (
     id SERIAL PRIMARY KEY,
     libelle VARCHAR(100) UNIQUE NOT NULL,
     actif BOOLEAN NOT NULL DEFAULT true,
-    ordre_affichage INTEGER NOT NULL DEFAULT 0
+    ordre_affichage INTEGER NOT NULL DEFAULT 0,
+    -- *** AJOUT 2026-09-24 (Palier 2, scoring d'équipe) *** : true = l'arrêt peut être reproché
+    -- à l'équipe de la ligne dans son score ; false (défaut) = arrêt NEUTRALISÉ (panne, manque
+    -- de matière...). Défaut prudent : rien n'est reproché à une équipe tant que la Direction
+    -- n'a pas décidé, cause par cause, qu'elle l'est.
+    imputable_equipe BOOLEAN NOT NULL DEFAULT false
 );
 
 CREATE TABLE IF NOT EXISTS arrets (
@@ -293,6 +309,12 @@ CREATE TABLE IF NOT EXISTS palettes (
     -- NULL si complete=true, texte libre côté tablette si complete=false (fin OF, fin
     -- poste, manque composants...).
     motif_partielle VARCHAR(100),
+    -- *** AJOUT 2026-09-24 (Palier 1, TRS) *** : pièces REBUTÉES constatées pendant le
+    -- remplissage de cette palette (déclarées par l'opérateur au scan, 0 par défaut). Elles
+    -- ne sont PAS comptées dans quantite_totale (qui ne contient que les pièces conformes
+    -- palettisées) : production brute = quantite_totale + nb_rebuts. Sert à la composante
+    -- Qualité du TRS. 0 signifie « aucun rebut déclaré », pas forcément « vérifié ».
+    nb_rebuts INTEGER NOT NULL DEFAULT 0 CHECK (nb_rebuts >= 0),
     operateur_id INTEGER NOT NULL REFERENCES users(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -582,4 +604,26 @@ CREATE TABLE IF NOT EXISTS labo_comparaison_ecritures (
     CONSTRAINT uq_comparaison_ecriture UNIQUE (ligne_id, jour, produit_id)
 );
 
+-- =============================================================
+-- ÉVOLUTIONS REJOUABLES (bases déjà existantes) -- idempotentes, sans effet sur une base
+-- fraîche où les colonnes sont déjà dans les CREATE TABLE ci-dessus.
+-- =============================================================
+ALTER TABLE produits_cache ADD COLUMN IF NOT EXISTS valeur_unitaire_fcfa NUMERIC;  -- 2026-09-24
+ALTER TABLE causes_arret ADD COLUMN IF NOT EXISTS imputable_equipe BOOLEAN NOT NULL DEFAULT false;   -- 2026-09-24 (Palier 2)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(50);   -- 2026-09-24 (Palier 1)
+ALTER TABLE palettes ADD COLUMN IF NOT EXISTS nb_rebuts INTEGER NOT NULL DEFAULT 0;   -- 2026-09-24 (Palier 1)
+
 DO $$ BEGIN RAISE NOTICE '✅ Schéma Labo créé -- schema.sql terminé.'; END; $$;
+
+-- *** AJOUT 2026-09-24 (Palier 2, scoring d'équipe) ***
+-- Journal des consultations du suivi individuel (formation) : QUI a consulté le suivi de QUI,
+-- et sur quelle période. Alimenté à chaque consultation, jamais modifié ni purgé par l'API.
+CREATE TABLE IF NOT EXISTS suivi_individuel_acces (
+    id SERIAL PRIMARY KEY,
+    consulte_par INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    periode_debut DATE NOT NULL,
+    periode_fin DATE NOT NULL,
+    consulte_le TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_suivi_acces_date ON suivi_individuel_acces (consulte_le DESC);

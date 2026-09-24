@@ -16,6 +16,7 @@ function backToMesLignes() {
 }
 function logout() {
   sessionStorage.removeItem('user')
+  sessionStorage.removeItem('token')
   router.push('/login')
 }
 </script>

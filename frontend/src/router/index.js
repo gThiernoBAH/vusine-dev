@@ -21,20 +21,27 @@ const MatieresView = () => import('../direction/components/labo/MatieresView.vue
 const AlertesEmballageView = () => import('../direction/components/labo/AlertesEmballageView.vue')
 const SimulationProductibleView = () => import('../direction/components/labo/SimulationProductibleView.vue')
 const EcritureOdooView = () => import('../direction/components/labo/EcritureOdooView.vue')
+// *** AJOUT 2026-09-24 (Palier 0) *** : écran Andon (TV d'atelier), chargé à la demande.
+const AndonView = () => import('../direction/AndonView.vue')
 import TabletteView from '../operateur/TabletteView.vue'
 import MesLignesView from '../operateur/components/MesLignesView.vue'
 import LigneOperateurView from '../operateur/components/LigneOperateurView.vue'
 // *** AJOUT 2026-09-23 *** : "Mon historique" côté tablette.
 import HistoriqueOperateurView from '../operateur/components/HistoriqueOperateurView.vue'
 
+// *** MODIFIÉ 2026-09-24 *** : une session n'existe que si l'utilisateur ET le jeton sont
+// présents. Un « user » orphelin (session d'avant les jetons) est traité comme déconnecté
+// -- sinon /login le renverrait vers le cockpit, qui le renverrait vers /login (boucle).
 function getStoredUser() {
   const stored = sessionStorage.getItem('user')
-  return stored ? JSON.parse(stored) : null
+  if (!stored || !sessionStorage.getItem('token')) return null
+  return JSON.parse(stored)
 }
 
 // Même règle que routerVersEspace() dans l'ancien App.vue : "direction" -> cockpit,
 // "operateur"/"ouvrier" -> tablette.
 function espaceDefaut(user) {
+  if (user?.user_type === 'kiosque') return '/andon'
   return user?.user_type === 'direction' ? '/cockpit/vue-usine' : '/operateur'
 }
 
@@ -83,6 +90,9 @@ const routes = [
       },
     ],
   },
+  // Écran Andon : compte kiosque (TV d'atelier), ou compte direction autorisé à voir la Vue
+  // Usine (aperçu depuis le menu). Cf. le guard ci-dessous.
+  { path: '/andon', name: 'andon', component: AndonView, meta: { requiresAuth: true, espace: 'andon' } },
   {
     path: '/operateur',
     component: TabletteView,
@@ -119,6 +129,14 @@ router.beforeEach((to) => {
   }
 
   if (!user) return '/login'
+
+  // Compte kiosque : n'a accès qu'à /andon, rien d'autre (le serveur applique la même
+  // restriction -- ceci évite juste d'afficher des écrans qui répondraient 403).
+  if (user.user_type === 'kiosque') return to.meta.espace === 'andon' ? true : '/andon'
+  if (to.meta.espace === 'andon') {
+    const peutVoir = user.user_type === 'direction' && (user.is_admin || (user.permissions || []).includes('view_vue_usine'))
+    return peutVoir ? true : espaceDefaut(user)
+  }
 
   // Un compte "direction" ne va pas sur /operateur et inversement -- même isolation que
   // routerVersEspace() avant la migration.

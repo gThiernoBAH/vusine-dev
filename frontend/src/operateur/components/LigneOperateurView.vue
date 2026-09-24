@@ -66,6 +66,9 @@ const palettePartielle = ref(false)
 const motifPartielle = ref('')
 const nbCartons = ref(null)
 const colisageCarton = ref(null)
+// *** AJOUT 2026-09-24 (Palier 1, TRS) *** : pièces rebutées pendant le remplissage de cette
+// palette (optionnel, vide = 0) -- alimente la composante Qualité du TRS.
+const nbRebuts = ref(null)
 const paletteSubmitting = ref(false)
 const paletteError = ref('')
 const derniereConfirmation = ref(null)
@@ -75,6 +78,7 @@ function ouvrirFormulairePalette() {
   numeroLot.value = ''
   palettePartielle.value = false
   motifPartielle.value = ''
+  nbRebuts.value = null
   nbCartons.value = itemSelectionne.value.cartons_par_palette ?? null
   colisageCarton.value = itemSelectionne.value.colisage_par_carton ?? null
   paletteError.value = ''
@@ -99,6 +103,7 @@ async function validerPalette() {
       colisage_carton: colisageCarton.value,
       complete: !palettePartielle.value,
       motif_partielle: palettePartielle.value ? (motifPartielle.value || null) : null,
+      nb_rebuts: nbRebuts.value > 0 ? Math.floor(nbRebuts.value) : 0,
     })
     derniereConfirmation.value = res.data
     qrDataUrl.value = ''
@@ -294,6 +299,11 @@ watch(screen, (val) => {
           <input v-model.number="colisageCarton" type="number" min="1" />
         </label>
 
+        <label class="field">
+          <span>Rebuts constatés (pièces, optionnel)</span>
+          <input v-model.number="nbRebuts" type="number" min="0" inputmode="numeric" placeholder="0" />
+        </label>
+
         <label v-if="palettePartielle" class="field">
           <span>Motif (optionnel)</span>
           <input v-model="motifPartielle" type="text" placeholder="ex: fin de poste, manque composants…" />
@@ -397,6 +407,7 @@ watch(screen, (val) => {
             <tr><td>N° lot</td><td>{{ derniereConfirmation.numero_lot }}</td></tr>
             <tr><td>Expiration</td><td>{{ derniereConfirmation.date_expiration || '—' }}</td></tr>
             <tr><td>Cartons</td><td>{{ derniereConfirmation.nb_cartons }} × {{ derniereConfirmation.colisage_carton }} = {{ derniereConfirmation.quantite_totale.toLocaleString('fr-FR') }} pcs</td></tr>
+            <tr v-if="derniereConfirmation.nb_rebuts > 0"><td>Rebuts</td><td>{{ derniereConfirmation.nb_rebuts.toLocaleString('fr-FR') }} pcs</td></tr>
             <!-- *** AJOUT 2026-09-23 *** : matricule ajouté -- plusieurs personnes
                  peuvent porter le même nom dans l'usine. -->
             <tr><td>Opérateur</td><td>{{ user.nom }}{{ user.matricule ? ` (${user.matricule})` : '' }}</td></tr>

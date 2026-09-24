@@ -80,6 +80,10 @@ class ProduitCache(Base):
     # rapprocher un produit fini de sa nomenclature (labo_formules_explosion) et du stock
     # matières (stock_matieres_cache), qui raisonnent tous deux par code, pas par id Odoo.
     default_code = Column(String(30), nullable=True, index=True)
+    # *** AJOUT 2026-09-24 (coût des pertes, Palier 0) *** : valeur d'une pièce en FCFA,
+    # saisie à la main, jamais écrasée par la synchro Odoo. NULL -> paramètre global
+    # valeur_piece_defaut_fcfa (cf. pertes_service.py).
+    valeur_unitaire_fcfa = Column(Numeric, nullable=True)
     synced_at = Column(TIMESTAMP, server_default=func.now())
 
 
@@ -216,6 +220,9 @@ class CauseArret(Base):
     libelle = Column(String(100), unique=True, nullable=False)
     actif = Column(Boolean, nullable=False, default=True)
     ordre_affichage = Column(Integer, nullable=False, default=0)
+    # *** AJOUT 2026-09-24 (Palier 2) *** : cf. schema.sql -- false = arrêt neutralisé dans le
+    # score d'équipe.
+    imputable_equipe = Column(Boolean, nullable=False, default=False, server_default="false")
 
 
 class Arret(Base):
@@ -263,6 +270,9 @@ class Palette(Base):
     # saisi côté tablette si complete=False. Pas de CHECK -- liste d'exemples ouverte.
     # Nommage confirmé par alertes_engine.py (filtre Palette.motif_partielle.is_(None)).
     motif_partielle = Column(String(100), nullable=True)
+    # *** AJOUT 2026-09-24 (Palier 1, TRS) *** : pièces rebutées déclarées au scan, HORS
+    # quantite_totale (qui ne contient que les pièces conformes) -- cf. schema.sql.
+    nb_rebuts = Column(Integer, nullable=False, default=0, server_default="0")
     operateur_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(TIMESTAMP, server_default=func.now())
 
@@ -766,3 +776,17 @@ class ReceptionMagasin(Base):
 
     palette = relationship("Palette")
     utilisateur = relationship("User")
+
+
+class SuiviIndividuelAcces(Base):
+    """*** AJOUT 2026-09-24 (Palier 2) *** : journal des consultations du suivi individuel
+    (cf. schema.sql). Une ligne par consultation, écrite par scoring_routes."""
+    __tablename__ = "suivi_individuel_acces"
+
+    id = Column(Integer, primary_key=True)
+    consulte_par = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    periode_debut = Column(Date, nullable=False)
+    periode_fin = Column(Date, nullable=False)
+    consulte_le = Column(TIMESTAMP, server_default=func.now())
+

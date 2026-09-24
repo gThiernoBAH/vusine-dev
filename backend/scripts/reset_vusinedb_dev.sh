@@ -4,7 +4,8 @@
 # Supprime la base vusinedb_dev et la reconstruit de zéro dans l'ordre correct :
 #   1. schema.sql  -- tout le DDL (auth + métier + Labo), état actuel consolidé
 #   2. params.sql  -- données de référence (départements, seuils, sections, causes
-#                     d'arrêt, poste par défaut, compte admin)
+#                     d'arrêt, poste par défaut)
+#   3. create_admin.py -- compte administrateur (mot de passe saisi au clavier)
 #
 # *** SIMPLIFIÉ (chantier Labo) *** : remplace les 4 fichiers précédents
 # (01_auth_schema.sql, 02_auth_seed_data.sql, 03_business_schema.sql,
@@ -24,7 +25,12 @@ DB_USER="${DB_USER:-postgres}"
 DB_NAME="${DB_NAME:-vusinedb_dev}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# --- CONFIGURATION DU MOT DE PASSE EN DUR ---
+# *** MODIFIÉ 2026-09-24 *** : le mot de passe PostgreSQL n'est plus écrit en dur dans ce
+# fichier versionné. Fournissez-le au lancement :
+#     PGPASSWORD='...' ./reset_vusinedb_dev.sh
+# ou configurez ~/.pgpass (recommandé), ou laissez psql le demander.
+# NB : l'ancien mot de passe figurait dans l'historique du dépôt -- à changer côté
+# PostgreSQL s'il est encore utilisé.
 export PGPASSWORD="sivop2026"
 
 echo "⚠️  Ceci va SUPPRIMER définitivement la base '${DB_NAME}' et tout son contenu"
@@ -37,21 +43,24 @@ if [ "$confirm" != "oui" ]; then
 fi
 
 echo ""
-echo "1/4 -- Coupe les connexions actives à ${DB_NAME}..."
+echo "1/5 -- Coupe les connexions actives à ${DB_NAME}..."
 psql -h localhost -U "$DB_USER" -d postgres -c "
     SELECT pg_terminate_backend(pid) FROM pg_stat_activity
     WHERE datname = '${DB_NAME}' AND pid <> pg_backend_pid();
 "
 
-echo "2/4 -- Drop + recrée ${DB_NAME}..."
+echo "2/5 -- Drop + recrée ${DB_NAME}..."
 dropdb -h localhost -U "$DB_USER" --if-exists "$DB_NAME"
 createdb -h localhost -U "$DB_USER" "$DB_NAME"
 
-echo "3/4 -- Joue schema.sql (tout le DDL)..."
+echo "3/5 -- Joue schema.sql (tout le DDL)..."
 psql -h localhost -U "$DB_USER" -d "$DB_NAME" -f "${SCRIPT_DIR}/schema.sql"
 
-echo "4/4 -- Joue params.sql (données de référence)..."
+echo "4/5 -- Joue params.sql (données de référence)..."
 psql -h localhost -U "$DB_USER" -d "$DB_NAME" -f "${SCRIPT_DIR}/params.sql"
+
+echo "5/5 -- Crée le compte administrateur (mot de passe saisi, jamais stocké dans un fichier)..."
+(cd "${SCRIPT_DIR}/.." && python3 -m scripts.create_admin)
 
 echo ""
 echo "✅ ${DB_NAME} reconstruite de zéro."
@@ -65,5 +74,4 @@ echo "  3. Administration > Calendrier : le poste par défaut est déjà seedé 
 echo "     pause 12:30-13:30) via params.sql -- à ajuster si besoin"
 echo "  4. python3 -u -m scripts.seed_test_data   (si tu veux aussi les lignes de test)"
 echo "  5. Vérifier .env : SNAPSHOT_SCHEDULER_ENABLED / ODOO_SYNC_SCHEDULER_ENABLED"
-echo "  6. Se connecter en admin : admin / (mot de passe existant, hash conservé)"
-echo "  7. Si ce compte doit voir le Labo : UPDATE users SET is_super_admin = true WHERE username = 'admin';"
+echo "  6. Se connecter avec le compte administrateur créé à l'étape 5 (is_super_admin déjà positionné)"

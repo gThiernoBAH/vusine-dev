@@ -7,6 +7,11 @@ from ..core import crud
 from ..models.production import Palette, Arret, LigneCache, PlanningDetailCache, ConfigurationPoste, JourSpecial
 
 DUREE_DEMARRAGE_DEFAUT_MIN = 10  # cf. param 'duree_demarrage_min', éditable
+# *** AJOUT 2026-09-24 (Palier 1) *** : temps de marche minimal avant de projeter la fin
+# de poste -- cf. param 'prevision_delai_min', éditable. Une palette se remplit en une
+# heure ou plus : projeter plus tôt donnerait des chiffres très instables (0 tant qu'aucune
+# palette n'est scannée, puis un bond).
+PREVISION_DELAI_DEFAUT_MIN = 60
 
 
 def _bornes_poste_du_jour(db: Session, jour: date) -> Optional[dict]:
@@ -48,7 +53,10 @@ def _duree_pause_ecoulee_s(pause_debut: Optional[time], pause_fin: Optional[time
     return max(0.0, (fin_effective - debut_effectif).total_seconds())
 
 
-def calculer_performance_ligne(db: Session, ligne: LigneCache, items_planning_jour: list[PlanningDetailCache]) -> dict:
+def calculer_performance_ligne(
+    db: Session, ligne: LigneCache, items_planning_jour: list[PlanningDetailCache],
+    maintenant: Optional[datetime] = None,
+) -> dict:
     """
     Calcule réel/théorique/performance %/retard/statut couleur pour une ligne, à
     l'instant présent.
@@ -97,8 +105,9 @@ def calculer_performance_ligne(db: Session, ligne: LigneCache, items_planning_jo
 
     qty_totale_jour = sum(float(item.qty) for item in items_planning_jour if item.qty)
 
-    aujourd_hui = date.today()
-    maintenant = datetime.now()
+    # `maintenant` injectable (tests, rejeu) -- par défaut l'heure serveur, comme avant.
+    maintenant = maintenant or datetime.now()
+    aujourd_hui = maintenant.date()
     bornes = _bornes_poste_du_jour(db, aujourd_hui)
 
     if bornes and bornes.get("ferme"):
@@ -168,6 +177,27 @@ def calculer_performance_ligne(db: Session, ligne: LigneCache, items_planning_jo
         performance_pct = None
         retard_min = 0
 
+    # --- *** AJOUT 2026-09-24 (Palier 1) *** Prévision de fin de poste, par projection
+    # LINÉAIRE : cadence moyenne observée pendant le temps de marche écoulé (hors arrêts et
+    # pause), maintenue pendant le temps de marche restant (hors pause). Suppose qu'aucun
+    # nouvel arrêt ne survient -- c'est une projection « si tout continue comme
+    # maintenant », pas une promesse. Absente (None) tant que le temps de marche est
+    # inférieur à prevision_delai_min ou qu'aucune palette n'est scannée.
+    prevision_fin_poste = None
+    delai_str = crud.get_param(db, "prevision_delai_min")
+    grace_str = crud.get_param(db, "duree_demarrage_min")
+    try:
+        delai_min = float(delai_str) if delai_str else PREVISION_DELAI_DEFAUT_MIN
+        grace_min = float(grace_str) if grace_str else DUREE_DEMARRAGE_DEFAUT_MIN
+    except ValueError:
+        delai_min, grace_min = PREVISION_DELAI_DEFAUT_MIN, DUREE_DEMARRAGE_DEFAUT_MIN
+    if reel > 0 and duree_disponible_ecoulee_s >= max(delai_min, grace_min) * 60:
+        restant_brut_s = max(0.0, (poste_fin_dt - instant_reference).total_seconds())
+        pause_restante_s = max(0.0, duree_pause_totale_s - duree_pause_ecoulee_s)
+        restant_net_s = max(0.0, restant_brut_s - pause_restante_s)
+        cadence_par_s = reel / duree_disponible_ecoulee_s
+        prevision_fin_poste = round(reel + cadence_par_s * restant_net_s)
+
     if arret_en_cours:
         statut = "arret"
     elif performance_pct is None:
@@ -192,4 +222,6 @@ def calculer_performance_ligne(db: Session, ligne: LigneCache, items_planning_jo
         "retard_min": retard_min,
         "statut": statut,
         "arret_en_cours": arret_en_cours,
+        "prevision_fin_poste": prevision_fin_poste,
+        "objectif_jour": round(qty_totale_jour),
     }

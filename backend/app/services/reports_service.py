@@ -7,6 +7,7 @@ from ..models.production import (
     LigneCache, PerformanceLigneJour, Palette, Arret, CauseArret,
     PlanningDetailCache, ProduitCache,
 )
+from .pertes_service import arrets_de_periode, minutes_entre
 from ..schemas.reports import (
     RapportLigneOut, RapportDirectionOut, TopFlopLigneOut, PerteCauseOut, EvolutionJourOut,
     RapportProduitOut, RapportSectionOut, HistoriqueScanOut,
@@ -53,14 +54,12 @@ def _agregat_ligne(db: Session, ligne: LigneCache, date_debut: date, date_fin: d
         .count()
     )
 
-    arrets = (
-        db.query(Arret)
-        .filter(Arret.ligne_id == ligne.id, Arret.heure_debut >= borne_debut, Arret.heure_debut < borne_fin)
-        .all()
-    )
-    maintenant = datetime.now()
+    # *** CORRIGÉ 2026-09-24 *** : avant, seuls les arrêts DÉMARRÉS dans la période étaient
+    # comptés, en entier (un arrêt ouvert comptait jusqu'à `now` même pour une période
+    # passée). Maintenant : tout arrêt qui chevauche la période, plafonné à ses bornes --
+    # cf. pertes_service.arrets_de_periode.
     temps_arret_min = round(sum(
-        ((a.heure_fin or maintenant) - a.heure_debut).total_seconds() / 60 for a in arrets
+        minutes_entre(debut, fin) for _a, debut, fin in arrets_de_periode(db, borne_debut, borne_fin, [ligne.id])
     ))
 
     return RapportLigneOut(
@@ -164,18 +163,13 @@ def rapport_vue_direction(db: Session, date_debut: date, date_fin: date) -> Rapp
     # --- Pertes par cause (toutes lignes confondues, sur la période) ---
     borne_debut, _ = _bornes_jour(date_debut)
     _, borne_fin = _bornes_jour(date_fin)
-    arrets = (
-        db.query(Arret)
-        .filter(Arret.heure_debut >= borne_debut, Arret.heure_debut < borne_fin)
-        .all()
-    )
-    maintenant = datetime.now()
+    # *** CORRIGÉ 2026-09-24 *** : mêmes durées plafonnées à la période que le Pareto
+    # (pertes_service) -- les deux écrans ne peuvent plus se contredire.
     causes_par_id = {c.id: c.libelle for c in db.query(CauseArret).all()}
     duree_par_cause: dict[str, float] = {}
-    for a in arrets:
+    for a, debut, fin in arrets_de_periode(db, borne_debut, borne_fin):
         libelle = causes_par_id.get(a.cause_id, "Inconnue")
-        duree_min = ((a.heure_fin or maintenant) - a.heure_debut).total_seconds() / 60
-        duree_par_cause[libelle] = duree_par_cause.get(libelle, 0) + duree_min
+        duree_par_cause[libelle] = duree_par_cause.get(libelle, 0) + minutes_entre(debut, fin)
     pertes_par_cause = sorted(
         (PerteCauseOut(cause=c, duree_min=round(d)) for c, d in duree_par_cause.items()),
         key=lambda p: p.duree_min, reverse=True,
@@ -244,7 +238,7 @@ def historique_scans(
             ligne_code=ligne_code, produit_nom=produit_nom, numero_lot=palette.numero_lot,
             nb_cartons=palette.nb_cartons, colisage_carton=palette.colisage_carton,
             quantite_totale=palette.quantite_totale, complete=palette.complete,
-            motif_partielle=palette.motif_partielle, operateur_id=palette.operateur_id,
+            motif_partielle=palette.motif_partielle, nb_rebuts=palette.nb_rebuts or 0, operateur_id=palette.operateur_id,
             operateur_nom=operateur_nom, operateur_matricule=operateur_matricule,
         )
         for palette, ligne_code, operateur_nom, operateur_matricule, produit_nom in q.all()

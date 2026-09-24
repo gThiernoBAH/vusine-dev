@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
-from ..core import schemas, crud, auth, models
+from ..core import schemas, crud, auth, models, tokens, login_throttle
 from ..core.database import get_db
+from ..core.settings import settings
 
 router = APIRouter(
     prefix="/auth",
@@ -17,26 +18,52 @@ router = APIRouter(
 # jamais via ce système de permissions par menu (pensé pour les comptes direction/cockpit).
 PERMISSION_REGISTRY = {
     "view_vue_usine": "Vue Usine (cockpit, détail ligne, palettes, arrêts)",
-    "view_scoring": "Performance du personnel (CDI/CDD)",
+    "view_scoring": "Performance des équipes (score par ligne)",
+    # *** AJOUT 2026-09-24 (Palier 2) *** : accès NOMINATIF, distinct et à accorder au cas par cas.
+    "view_suivi_individuel": "Suivi individuel pour la formation (nominatif, consultations journalisées)",
     "view_parametrage": "Paramétrage (causes d'arrêt, seuils, équipements)",
 }
 
 
+# Seules routes accessibles à un compte kiosque (chemins EXACTS, méthode GET uniquement).
+CHEMINS_KIOSQUE = ("/dashboard/andon",)
+
+
 # --- Dépendance pour récupérer l'utilisateur courant ---
-# Même mécanisme que SIVOX (header X-User-ID) -- cohérence volontaire entre les deux
-# projets, cf. cadrage. Limite assumée identique : pas une authentification
-# cryptographiquement vérifiée, juste une revendication d'identité.
+# *** REFAIT 2026-09-24 *** : l'ancien mécanisme (header X-User-ID, « même mécanisme que
+# SIVOX ») n'était qu'une revendication d'identité non vérifiée : quiconque atteignait
+# l'API pouvait envoyer X-User-ID: 1 et agir en admin. Remplacé par un jeton signé
+# (Authorization: Bearer <jeton>, cf. core/tokens.py), émis par POST /auth/login.
+# Vérifié à chaque requête : signature, expiration, compte existant ET actif, mot de
+# passe inchangé depuis l'émission du jeton.
 def get_current_user(request: Request, db: Session = Depends(get_db)):
-    user_id = request.headers.get("X-User-ID")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Non authentifié")
-    try:
-        user_id_int = int(user_id)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Non authentifié")
-    user = db.query(models.User).filter(models.User.id == user_id_int).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="Non authentifié")
+    non_authentifie = HTTPException(
+        status_code=401, detail="Non authentifié", headers={"WWW-Authenticate": "Bearer"},
+    )
+    entete = request.headers.get("Authorization", "")
+    schema, _, jeton = entete.partition(" ")
+    if schema.lower() != "bearer" or not jeton:
+        raise non_authentifie
+
+    payload = tokens.lire_jeton(jeton.strip())
+    if not payload:
+        raise non_authentifie
+
+    user = db.query(models.User).filter(models.User.id == payload["sub"]).first()
+    if not user or not user.is_active:
+        raise non_authentifie
+    if payload.get("pwd") != tokens.empreinte_mot_de_passe(user.password_hash):
+        # Mot de passe changé depuis l'émission du jeton -> session révoquée.
+        raise non_authentifie
+
+    # *** AJOUT 2026-09-24 (Andon) *** : un compte « kiosque » (écran d'atelier, session de
+    # 30 jours laissée ouverte sur une TV) ne peut appeler QUE la lecture de l'écran
+    # Andon. Restriction centrale, ici, plutôt que route par route : toute route existante
+    # ou future qui dépend de get_current_user lui est fermée d'office (403).
+    if user.user_type == "kiosque" and not (
+        request.method == "GET" and request.url.path.rstrip("/") in CHEMINS_KIOSQUE
+    ):
+        raise HTTPException(status_code=403, detail="Ce compte est réservé à l'affichage Andon.")
     return user
 
 
@@ -53,6 +80,21 @@ def require_admin(current_user: models.User = Depends(get_current_user)):
 # qu'une fonctionnalité n'a pas été explicitement "graduée" vers l'usage courant.
 def require_labo(current_user: models.User = Depends(get_current_user)):
     if not getattr(current_user, "is_super_admin", False):
+        raise HTTPException(status_code=403, detail="Accès non autorisé à cette fonctionnalité.")
+    return current_user
+
+
+def require_andon(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Écran Andon : compte kiosque, ou compte direction autorisé à voir la Vue Usine
+    (même règle que require_permission("view_vue_usine"), sans la dépendance FastAPI --
+    un kiosque n'a jamais aucune UserPermission)."""
+    if current_user.user_type == "kiosque" or getattr(current_user, "is_admin", False):
+        return current_user
+    a_la_permission = db.query(models.UserPermission).filter(
+        models.UserPermission.user_id == current_user.id,
+        models.UserPermission.permission_key == "view_vue_usine",
+    ).first()
+    if not a_la_permission:
         raise HTTPException(status_code=403, detail="Accès non autorisé à cette fonctionnalité.")
     return current_user
 
@@ -134,6 +176,12 @@ def create_user(user_schema: schemas.UserCreate, db: Session = Depends(get_db), 
         raise HTTPException(status_code=400, detail="Matricule déjà utilisé.")
     if not user_schema.username and not user_schema.matricule:
         raise HTTPException(status_code=422, detail="username ou matricule requis.")
+    if user_schema.user_type == "kiosque":
+        # Écran d'atelier : identifiant textuel, jamais de droits d'administration.
+        if not user_schema.username:
+            raise HTTPException(status_code=422, detail="Un compte kiosque se connecte avec un username.")
+        if user_schema.is_admin:
+            raise HTTPException(status_code=422, detail="Un compte kiosque ne peut pas être administrateur.")
 
     new_user = crud.create_user(db=db, user_create=user_schema)
     if not new_user:
@@ -185,12 +233,24 @@ def set_user_permissions(user_id: int, payload: UserPermissionsUpdate, db: Sessi
 
 
 @router.post("/login", status_code=status.HTTP_200_OK)
-def login_user(user_login: schemas.UserLogin, db: Session = Depends(get_db)):
+def login_user(user_login: schemas.UserLogin, request: Request, db: Session = Depends(get_db)):
+    ip = request.client.host if request.client else "inconnue"
+
+    attente = login_throttle.secondes_restantes(user_login.identifiant, ip)
+    if attente:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Trop de tentatives. Réessayez dans {-(-attente // 60)} minute(s).",
+            headers={"Retry-After": str(attente)},
+        )
+
     db_user = crud.get_user_by_identifiant(db, user_login.identifiant)
     if not db_user or not auth.verify_password(user_login.password, db_user.password_hash):
+        login_throttle.enregistrer_echec(user_login.identifiant, ip)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Identifiants incorrects.")
     if not db_user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Compte désactivé.")
+    login_throttle.effacer(user_login.identifiant, ip)
 
     if db_user.is_admin:
         permissions = list(PERMISSION_REGISTRY.keys())
@@ -200,8 +260,16 @@ def login_user(user_login: schemas.UserLogin, db: Session = Depends(get_db)):
             db.query(models.UserPermission).filter(models.UserPermission.user_id == db_user.id).all()
         ]
 
+    # Compte kiosque : session longue (KIOSK_TOKEN_TTL_DAYS) -- sinon la TV d'atelier
+    # demanderait une reconnexion chaque jour, sans personne devant pour la faire.
+    duree = settings.KIOSK_TOKEN_TTL_DAYS * 24 if db_user.user_type == "kiosque" else None
+    jeton, expire_le = tokens.creer_jeton(db_user.id, db_user.password_hash, duree_heures=duree)
+
     return {
         "message": "Connexion réussie.",
+        "access_token": jeton,
+        "token_type": "bearer",
+        "expires_at": expire_le,
         "user": {
             "id": db_user.id,
             "nom": db_user.nom,
@@ -214,6 +282,7 @@ def login_user(user_login: schemas.UserLogin, db: Session = Depends(get_db)):
             # *** AJOUT (chantier Labo) *** : distinct de is_admin, décide seul de
             # l'affichage du menu Labo côté front (cf. router/index.js, Sidebar.vue).
             "is_super_admin": db_user.is_super_admin,
+            "section_scope": db_user.section_scope,
             "email": db_user.email,
             "telephone": db_user.telephone,
             "permissions": permissions,
