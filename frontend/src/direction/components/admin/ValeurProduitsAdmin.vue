@@ -105,7 +105,7 @@ async function enregistrer(produit) {
 
 <style scoped>
 .valeur-produits { display: flex; flex-direction: column; gap: var(--space-4); }
-.hint { font-size: var(--font-size-sm); color: var(--color-text-muted); max-width: 720px; margin: 0; }
+.hint { font-size: var(--font-size-sm); color: var(--color-text-muted); max-width: 900px; margin: 0; }
 .error-banner { background: var(--color-rouge-bg); color: var(--color-rouge); padding: var(--space-3); border-radius: var(--radius-md); margin: 0; }
 .success-banner { background: var(--color-vert-bg); color: var(--color-vert); padding: var(--space-3); border-radius: var(--radius-md); margin: 0; }
 .valeur-input {

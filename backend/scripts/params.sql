@@ -52,7 +52,11 @@ INSERT INTO params (key, value) VALUES
     -- *** AJOUT 2026-09-24 (Palier 2) *** : scoring d'équipe. Sous cet effectif (personnes
     -- distinctes affectées à la ligne sur la période), le score de la ligne est MASQUÉ : une
     -- équipe d'une ou deux personnes identifierait quelqu'un. 0 = pas de masquage.
-    ('scoring_equipe_effectif_min', '3')
+    ('scoring_equipe_effectif_min', '0'),
+    -- *** AJOUT 2026-09-24 *** : nombre minimal de palettes sur la période pour que TRS et score
+    -- d'équipe soient jugés représentatifs. En dessous, les écrans grisent les pourcentages
+    -- (adoption des scans insuffisante, pas une vraie contre-performance).
+    ('donnees_min_palettes', '10')
 ON CONFLICT (key) DO NOTHING;
 
 -- --- Comptes utilisateurs ----------------------------------------------------------

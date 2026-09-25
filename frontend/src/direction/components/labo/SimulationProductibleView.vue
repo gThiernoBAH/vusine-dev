@@ -75,8 +75,12 @@ onMounted(charger)
       et, à part, les écarts réellement constatés aux inventaires. Les deux ne sont jamais fusionnés.
     </p>
 
-    <!-- Recalcul proposé seulement sur la simulation : les écarts viennent de la synchro Odoo. -->
-    <LaboToolbar :recalculer="vue === 'simulation' ? recalculer : null">
+    <!-- Le bouton reste visible sur les deux sous-vues (2026-09-24), grisé sur les écarts : ils viennent de
+         la synchronisation Odoo, il n'y a rien à recalculer ici. -->
+    <LaboToolbar
+      :recalculer="recalculer" :recalcul-desactive="vue !== 'simulation'"
+      hint-desactive="Les écarts d'inventaire viennent de la synchronisation Odoo : il n'y a rien à recalculer ici. Le recalcul s'applique à « Produits fabricables »."
+    >
       <template #gauche><LaboSousOnglets v-model="vue" :options="VUES" /></template>
       <template #droite>
         <ExportButton :key="exportCourant.domaine" :domaine="exportCourant.domaine" :libelle="exportCourant.libelle" />

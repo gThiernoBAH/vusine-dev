@@ -19,13 +19,18 @@
  *   - format : texte affiché ET texte recherché (ex. nombre formaté à la française).
  *   - sortValue : valeur de tri si elle diffère de row[key] (ex. priorité métier).
  *
+ * Mode carte (*** AJOUT 2026-09-24 ***, opt-in) : `cartesSousPx` = largeur d'écran en dessous de
+ * laquelle chaque ligne devient une CARTE (première colonne en titre, colonne `carteBadge: true` en
+ * pastille, les autres en « libellé : valeur »). Évite le défilement horizontal sur tablette en
+ * portrait. Désactivé par défaut (0) : les écrans Direction gardent leur tableau.
+ *
  * Ligne dépliable (*** AJOUT 2026-09-23 ***, ex. analyse F4 sous la ligne concernée) :
  * passer `expandedKeys` (un Set des clés de ligne actuellement dépliées, géré par
  * l'écran appelant) et un slot #expanded-row="{ row }" -- rendu dans une <tr> pleine
  * largeur juste après la ligne concernée, tant que sa clé est dans le Set. DataTable ne
  * décide jamais lui-même quoi déplier : il se contente d'afficher ce que l'écran lui dit.
  */
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 
 const props = defineProps({
   columns: { type: Array, required: true },
@@ -39,7 +44,26 @@ const props = defineProps({
   pageSizes: { type: Array, default: () => [25, 50, 100] },
   rowClass: { type: Function, default: null },
   expandedKeys: { type: Set, default: null },
+  cartesSousPx: { type: Number, default: 0 },
 })
+
+// *** CORRIGÉ 2026-09-24 *** : la bascule se fait sur la largeur RÉELLE de la zone du tableau, pas sur celle
+// de la fenêtre. Sur tablette, l'application affiche une colonne de 480 px au milieu d'une fenêtre de 820 px :
+// avec la largeur de fenêtre, le mode carte ne se déclenchait jamais et le défilement horizontal restait
+// (constaté sur une capture automatique). Repli sur la fenêtre quand la zone n'est pas mesurable (tests).
+const racine = ref(null)
+const largeurZone = ref(typeof window !== 'undefined' ? window.innerWidth : 1280)
+const mesurer = () => { largeurZone.value = racine.value?.clientWidth || window.innerWidth }
+let observateur = null
+onMounted(() => {
+  mesurer()
+  if (typeof ResizeObserver !== 'undefined' && racine.value) { observateur = new ResizeObserver(mesurer); observateur.observe(racine.value) }
+  window.addEventListener('resize', mesurer)
+})
+onUnmounted(() => { observateur?.disconnect(); window.removeEventListener('resize', mesurer) })
+const modeCartes = computed(() => props.cartesSousPx > 0 && largeurZone.value <= props.cartesSousPx)
+const colonneBadge = computed(() => props.columns.find(c => c.carteBadge) || null)
+const colonnesCorps = computed(() => props.columns.slice(1).filter(c => !c.carteBadge))
 
 const recherche = ref('')
 const triCle = ref(props.defaultSort?.key ?? null)
@@ -143,7 +167,7 @@ function ariaSort(col) {
 </script>
 
 <template>
-  <div class="data-table">
+  <div ref="racine" class="data-table">
     <div class="dt-barre">
       <div class="dt-recherche">
         <svg class="dt-loupe" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
@@ -163,6 +187,35 @@ function ariaSort(col) {
     </div>
 
     <div v-if="loading" class="dt-etat">Chargement…</div>
+
+    <!-- Mode carte : une carte par ligne, aucun défilement horizontal -->
+    <div v-else-if="modeCartes" class="dt-cartes">
+      <article v-for="(row, i) in lignesPage" :key="cle(row, i)" class="dt-carte">
+        <header class="dt-carte-tete">
+          <strong>
+            <slot :name="`cell-${columns[0].key}`" :row="row" :value="row[columns[0].key]">
+              {{ columns[0].format ? columns[0].format(row[columns[0].key], row) : (row[columns[0].key] ?? '—') }}
+            </slot>
+          </strong>
+          <span v-if="colonneBadge" class="dt-carte-badge">
+            <slot :name="`cell-${colonneBadge.key}`" :row="row" :value="row[colonneBadge.key]">
+              {{ colonneBadge.format ? colonneBadge.format(row[colonneBadge.key], row) : (row[colonneBadge.key] ?? '—') }}
+            </slot>
+          </span>
+        </header>
+        <dl class="dt-carte-corps">
+          <template v-for="col in colonnesCorps" :key="col.key || col.label">
+            <dt>{{ col.label }}</dt>
+            <dd>
+              <slot :name="`cell-${col.key}`" :row="row" :value="row[col.key]">
+                {{ col.format ? col.format(row[col.key], row) : (row[col.key] ?? '—') }}
+              </slot>
+            </dd>
+          </template>
+        </dl>
+      </article>
+      <p v-if="!lignesPage.length" class="dt-vide">{{ rows.length ? 'Aucune ligne ne correspond à la recherche.' : emptyText }}</p>
+    </div>
 
     <div v-else class="dt-cadre">
       <table>
@@ -250,6 +303,14 @@ function ariaSort(col) {
 .dt-recherche input:focus { outline: 2px solid var(--color-brand); outline-offset: -1px; }
 .dt-compte { font-size: var(--font-size-xs); color: var(--color-text-muted); white-space: nowrap; }
 .dt-etat { color: var(--color-text-muted); padding: var(--space-4) 0; }
+
+/* Mode carte (2026-09-24) */
+.dt-cartes { display: flex; flex-direction: column; gap: var(--space-3); }
+.dt-carte { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); }
+.dt-carte-tete { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+.dt-carte-corps { display: grid; grid-template-columns: auto 1fr; gap: 4px var(--space-3); margin: 0; font-size: var(--font-size-sm); }
+.dt-carte-corps dt { color: var(--color-text-muted); }
+.dt-carte-corps dd { margin: 0; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
 
 .dt-cadre {
   overflow-x: auto; background: var(--color-surface);

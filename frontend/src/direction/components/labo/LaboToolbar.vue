@@ -13,6 +13,10 @@ import { ref } from 'vue'
 const props = defineProps({
   recalculer: { type: Function, default: null },
   hintRecalcul: { type: String, default: 'Relance le calcul maintenant, sans attendre le recalcul automatique de la nuit.' },
+  // *** AJOUT 2026-09-24 *** : bouton toujours visible mais grisé (avec explication) sur une sous-vue
+  // où il ne s'applique pas -- avant, il DISPARAISSAIT au changement de sous-onglet.
+  recalculDesactive: { type: Boolean, default: false },
+  hintDesactive: { type: String, default: '' },
 })
 
 const enCours = ref(false)
@@ -32,7 +36,7 @@ async function lancer() {
     <div class="gauche">
       <button
         v-if="recalculer" type="button" class="vbtn vbtn-primary"
-        :disabled="enCours" :title="hintRecalcul" @click="lancer"
+        :disabled="enCours || recalculDesactive" :title="recalculDesactive ? hintDesactive : hintRecalcul" @click="lancer"
       >
         <span v-if="enCours" class="vbtn-spinner" aria-hidden="true" />
         {{ enCours ? 'Recalcul en cours…' : 'Recalculer maintenant' }}

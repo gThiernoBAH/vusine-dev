@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -24,6 +24,7 @@ class AlerteOut(BaseModel):
     message: str
     niveau: str
     created_at: datetime
+    resolue: bool = False   # *** AJOUT 2026-09-25 *** : utile seulement en consultation par `jour` (cf. plus bas)
 
     class Config:
         from_attributes = True
@@ -40,17 +41,18 @@ class RunNowOut(BaseModel):
 
 @router.get("", response_model=list[AlerteOut])
 def list_alertes(
+    jour: Optional[date] = Query(None, description="*** AJOUT 2026-09-25 *** : consulter les alertes CRÉÉES ce jour-là (résolues ou non), au lieu des alertes actives d'aujourd'hui. ATTENTION : il n'existe pas de date de résolution en base (`resolue` n'a pas de `resolue_at`) -- ceci montre ce qui a été déclenché ce jour-là, PAS une reconstitution fiable de ce qui était encore ouvert à une heure précise de ce jour-là."),
     db: Session = Depends(get_db),
     _user: User = Depends(require_permission("view_vue_usine")),
 ):
-    """Alertes actives (non résolues), les plus récentes d'abord -- écran Alertes,
-    bouton 'Actualiser maintenant' à part (cf. run_alertes_now ci-dessous)."""
-    alertes = (
-        db.query(Alerte)
-        .filter(Alerte.resolue.is_(False))
-        .order_by(Alerte.created_at.desc())
-        .all()
-    )
+    """Sans `jour` : alertes actives (non résolues) d'aujourd'hui, les plus récentes
+    d'abord -- écran Alertes, bouton 'Actualiser maintenant' à part (cf. run_alertes_now
+    ci-dessous). Avec `jour` : alertes créées ce jour-là, résolues ou non (cf. avertissement
+    ci-dessus sur les limites de cette vue historique)."""
+    q = db.query(Alerte)
+    q = q.filter(Alerte.created_at >= datetime.combine(jour, datetime.min.time()),
+                 Alerte.created_at < datetime.combine(jour, datetime.max.time())) if jour else q.filter(Alerte.resolue.is_(False))
+    alertes = q.order_by(Alerte.created_at.desc()).all()
     lignes_par_id = {
         l.id: l.code
         for l in db.query(LigneCache).filter(LigneCache.id.in_({a.ligne_id for a in alertes})).all()
@@ -58,7 +60,7 @@ def list_alertes(
     return [
         AlerteOut(
             id=a.id, type=a.type, ligne_code=lignes_par_id.get(a.ligne_id),
-            message=a.message, niveau=a.niveau, created_at=a.created_at,
+            message=a.message, niveau=a.niveau, created_at=a.created_at, resolue=a.resolue,
         )
         for a in alertes
     ]

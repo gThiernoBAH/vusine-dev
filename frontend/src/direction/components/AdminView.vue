@@ -1,5 +1,6 @@
 <script setup>
 import { ref } from 'vue'
+import { useRoute } from 'vue-router'
 import PersonnelAdmin from './admin/PersonnelAdmin.vue'
 import EquipementsAdmin from './admin/EquipementsAdmin.vue'
 import CausesArretAdmin from './admin/CausesArretAdmin.vue'
@@ -8,10 +9,12 @@ import CalendrierAdmin from './admin/CalendrierAdmin.vue'
 import ParametresAdmin from './admin/ParametresAdmin.vue'
 import ValeurProduitsAdmin from './admin/ValeurProduitsAdmin.vue'
 import RapportMatinalAdmin from './admin/RapportMatinalAdmin.vue'
+import AffectationsAdmin from './admin/AffectationsAdmin.vue'
 
 const TABS = [
   { key: 'lignes', label: 'Lignes' },
   { key: 'personnel', label: 'Personnel' },
+  { key: 'affectations', label: 'Affectations' },
   { key: 'equipements', label: 'Équipements' },
   { key: 'causes', label: "Causes d'arrêt" },
   { key: 'calendrier', label: 'Calendrier' },
@@ -19,7 +22,11 @@ const TABS = [
   { key: 'valeur_produits', label: 'Valeur des produits' },
   { key: 'rapport_matinal', label: 'Rapport matinal' },
 ]
-const activeTab = ref('lignes')
+// *** AJOUT 2026-09-25 *** : ouvre directement le bon onglet quand on arrive depuis un lien
+// externe (ex. "Gérer l'équipe" sur l'écran détail de ligne) via /cockpit/admin?onglet=affectations.
+const route = useRoute()
+const TAB_KEYS = TABS.map(t => t.key)
+const activeTab = ref(TAB_KEYS.includes(route.query.onglet) ? route.query.onglet : 'lignes')
 </script>
 
 <template>
@@ -48,6 +55,7 @@ const activeTab = ref('lignes')
     <ParametresAdmin v-else-if="activeTab === 'parametres'" />
     <ValeurProduitsAdmin v-else-if="activeTab === 'valeur_produits'" />
     <RapportMatinalAdmin v-else-if="activeTab === 'rapport_matinal'" />
+    <AffectationsAdmin v-else-if="activeTab === 'affectations'" />
   </div>
 </template>
 

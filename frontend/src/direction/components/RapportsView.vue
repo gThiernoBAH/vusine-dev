@@ -20,7 +20,7 @@ const pareto = ref(null)
 const trs = ref(null)
 // *** AJOUT 2026-09-24 (Palier 1) *** : onglet Changements de série (SMED).
 const smed = ref(null)
-const paretoLigneId = ref('')
+const ligneId = ref('')
 const lignesFiltre = ref([])
 const causesDepliees = ref(new Set())
 const isLoading = ref(true)
@@ -31,6 +31,7 @@ async function charger() {
   errorMessage.value = ''
   try {
     const params = { date_debut: dateDebut.value, date_fin: dateFin.value }
+    if (ligneId.value) params.ligne_id = ligneId.value   // 2026-09-24 : filtre ligne commun à TOUS les onglets
     if (activeTab.value === 'par_ligne') {
       const res = await apiClient.get('/rapports/par-ligne', { params })
       parLigne.value = res.data
@@ -41,15 +42,12 @@ async function charger() {
       const res = await apiClient.get('/rapports/historique-scans', { params })
       historiqueScans.value = res.data
     } else if (activeTab.value === 'smed') {
-      if (paretoLigneId.value) params.ligne_id = paretoLigneId.value
       const res = await apiClient.get('/rapports/changements-serie', { params })
       smed.value = res.data
     } else if (activeTab.value === 'trs') {
-      if (paretoLigneId.value) params.ligne_id = paretoLigneId.value
       const res = await apiClient.get('/rapports/trs', { params })
       trs.value = res.data
     } else if (activeTab.value === 'pareto') {
-      if (paretoLigneId.value) params.ligne_id = paretoLigneId.value
       const res = await apiClient.get('/rapports/pareto-arrets', { params })
       pareto.value = res.data
       causesDepliees.value = new Set()
@@ -70,63 +68,26 @@ onMounted(async () => {
   try { lignesFiltre.value = (await apiClient.get('/entities/lignes')).data } catch { /* filtre indisponible */ }
 })
 
+// *** REFONDU 2026-09-24 *** : un seul export pour tous les onglets (Excel / PDF / CSV), même
+// période, même filtre ligne -- remplace les sept fonctions quasi identiques.
+const EXPORTS = {
+  par_ligne: ['/rapports/par-ligne/export', 'rapport_vusine'],
+  par_produit: ['/rapports/par-produit/export', 'rapport_produits'],
+  vue_direction: ['/rapports/vue-direction/export', 'vue_direction'],
+  historique: ['/rapports/historique-scans/export', 'historique_scans'],
+  pareto: ['/rapports/pareto-arrets/export', 'pareto_arrets'],
+  smed: ['/rapports/changements-serie/export', 'changements_serie'],
+  trs: ['/rapports/trs/export', 'trs'],
+}
 async function exporter(format) {
+  const [chemin, base] = EXPORTS[activeTab.value]
   const params = { date_debut: dateDebut.value, date_fin: dateFin.value, format }
-  const res = await apiClient.get('/rapports/par-ligne/export', { params, responseType: 'blob' })
+  if (ligneId.value) params.ligne_id = ligneId.value
+  const res = await apiClient.get(chemin, { params, responseType: 'blob' })
   const url = window.URL.createObjectURL(new Blob([res.data]))
   const a = document.createElement('a')
   a.href = url
-  a.download = `rapport_vusine_${dateDebut.value}_${dateFin.value}.${format}`
-  a.click()
-  window.URL.revokeObjectURL(url)
-}
-
-// *** AJOUT 2026-09-23 *** : export de l'historique des scans (xlsx/pdf/csv).
-async function exporterHistorique(format) {
-  const params = { date_debut: dateDebut.value, date_fin: dateFin.value, format }
-  const res = await apiClient.get('/rapports/historique-scans/export', { params, responseType: 'blob' })
-  const url = window.URL.createObjectURL(new Blob([res.data]))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `historique_scans_${dateDebut.value}_${dateFin.value}.${format}`
-  a.click()
-  window.URL.revokeObjectURL(url)
-}
-
-// *** AJOUT 2026-09-24 (Palier 0) *** : export du Pareto (xlsx/pdf/csv), même période et même filtre ligne.
-async function exporterPareto(format) {
-  const params = { date_debut: dateDebut.value, date_fin: dateFin.value, format }
-  if (paretoLigneId.value) params.ligne_id = paretoLigneId.value
-  const res = await apiClient.get('/rapports/pareto-arrets/export', { params, responseType: 'blob' })
-  const url = window.URL.createObjectURL(new Blob([res.data]))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `pareto_arrets_${dateDebut.value}_${dateFin.value}.${format}`
-  a.click()
-  window.URL.revokeObjectURL(url)
-}
-
-async function exporterSmed(format) {
-  const params = { date_debut: dateDebut.value, date_fin: dateFin.value, format }
-  if (paretoLigneId.value) params.ligne_id = paretoLigneId.value
-  const res = await apiClient.get('/rapports/changements-serie/export', { params, responseType: 'blob' })
-  const url = window.URL.createObjectURL(new Blob([res.data]))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `changements_serie_${dateDebut.value}_${dateFin.value}.${format}`
-  a.click()
-  window.URL.revokeObjectURL(url)
-}
-
-// *** AJOUT 2026-09-24 (Palier 1) *** : export du TRS (xlsx/pdf/csv), même période et même filtre ligne.
-async function exporterTrs(format) {
-  const params = { date_debut: dateDebut.value, date_fin: dateFin.value, format }
-  if (paretoLigneId.value) params.ligne_id = paretoLigneId.value
-  const res = await apiClient.get('/rapports/trs/export', { params, responseType: 'blob' })
-  const url = window.URL.createObjectURL(new Blob([res.data]))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `trs_${dateDebut.value}_${dateFin.value}.${format}`
+  a.download = `${base}_${dateDebut.value}_${dateFin.value}.${format}`
   a.click()
   window.URL.revokeObjectURL(url)
 }
@@ -141,7 +102,8 @@ const fmtPct1 = v => (v === null || v === undefined ? '—' : fmtPct(v))
 // Couleur d'un TRS par rapport à la cible paramétrée (trs_cible_pct) : atteint = vert,
 // à moins de 15 points = orange, au-delà = rouge.
 function classeTrs(valeur) {
-  if (valeur === null || valeur === undefined || !trs.value) return 'gris'
+  // Données insuffisantes : aucune couleur d'alarme (un 0 % sans scans n'est pas une alerte).
+  if (valeur === null || valeur === undefined || !trs.value || trs.value.donnees_insuffisantes) return 'gris'
   const cible = trs.value.cible_pct
   return valeur >= cible ? 'vert' : valeur >= cible - 15 ? 'orange' : 'rouge'
 }
@@ -152,6 +114,30 @@ function toggleCause(row) {
   s.has(row.cause_id) ? s.delete(row.cause_id) : s.add(row.cause_id)
   causesDepliees.value = s
 }
+
+const fmtPctEntier = v => (v === null || v === undefined ? '—' : `${v} %`)
+const COLONNES_PAR_LIGNE = [
+  { key: 'code', label: 'Ligne', format: (v, r) => `${r.code} — ${r.nom}` },
+  { key: 'reel_total', label: 'Réel', align: 'right', format: fmtNombre },
+  { key: 'theorique_total', label: 'Théorique', align: 'right', format: fmtNombre },
+  { key: 'performance_moyenne', label: 'Performance', align: 'right', format: fmtPctEntier },
+  { key: 'nb_palettes', label: 'Palettes', align: 'right' },
+  { key: 'temps_arret_min', label: "Temps d'arrêt", align: 'right', format: v => `${fmtNombre(v)} min` },
+]
+const COLONNES_PAR_PRODUIT = [
+  { key: 'nom', label: 'Produit' },
+  { key: 'quantite_totale', label: 'Quantité totale', align: 'right', format: fmtNombre },
+  { key: 'nb_palettes', label: 'Palettes', align: 'right' },
+  { key: 'nb_palettes_completes', label: 'Complètes', align: 'right' },
+  { key: 'nb_palettes_partielles', label: 'Partielles', align: 'right' },
+]
+const COLONNES_ATELIER = [
+  { key: 'section_nom', label: 'Atelier' },
+  { key: 'reel_total', label: 'Réel', align: 'right', format: fmtNombre },
+  { key: 'theorique_total', label: 'Théorique', align: 'right', format: fmtNombre },
+  { key: 'performance_moyenne', label: 'Performance', align: 'right', format: fmtPctEntier },
+  { key: 'nb_lignes', label: 'Lignes', align: 'right' },
+]
 
 const COLONNES_TRS = [
   { key: 'code', label: 'Ligne', format: (v, r) => `${r.code} — ${r.nom}` },
@@ -238,87 +224,42 @@ const COLONNES_HISTORIQUE = [
         <button :class="['tab-btn', { active: activeTab === 'smed' }]" @click="activeTab = 'smed'; charger()" title="Durée des changements de série, déduite des scans de palettes">Changements de série</button>
         <button :class="['tab-btn', { active: activeTab === 'trs' }]" @click="activeTab = 'trs'; charger()" title="Taux de Rendement Synthétique : disponibilité x performance x qualité">TRS</button>
       </div>
+    </div>
+
+    <!-- *** UNIFORMISÉ 2026-09-24 *** : la même barre sous les onglets pour TOUS les écrans
+         Rapports : période, ligne, puis les trois exports ; la recherche du tableau vient juste
+         dessous (DataTable). -->
+    <div class="toolbar">
       <div class="dates">
         <input type="date" v-model="dateDebut" @change="charger" />
         <span>→</span>
         <input type="date" v-model="dateFin" @change="charger" />
-        <template v-if="activeTab === 'par_ligne'">
-          <button class="export-btn" title="Télécharger ce tableau au format Excel" @click="exporter('xlsx')"><FileDown :size="16" /> Excel</button>
-          <button class="export-btn" title="Télécharger ce tableau au format PDF" @click="exporter('pdf')"><FileDown :size="16" /> PDF</button>
-        </template>
-        <template v-else-if="activeTab === 'smed'">
-          <select v-model="paretoLigneId" class="ligne-select" title="Limiter aux changements d'une ligne" @change="charger">
-            <option value="">Toutes les lignes</option>
-            <option v-for="l in lignesFiltre" :key="l.id" :value="l.id">{{ l.code }} — {{ l.nom }}</option>
-          </select>
-          <button class="export-btn" title="Télécharger au format Excel" @click="exporterSmed('xlsx')"><FileDown :size="16" /> Excel</button>
-          <button class="export-btn" title="Télécharger au format PDF" @click="exporterSmed('pdf')"><FileDown :size="16" /> PDF</button>
-          <button class="export-btn" title="Télécharger au format CSV" @click="exporterSmed('csv')"><FileDown :size="16" /> CSV</button>
-        </template>
-        <template v-else-if="activeTab === 'trs'">
-          <select v-model="paretoLigneId" class="ligne-select" title="Limiter le TRS à une ligne" @change="charger">
-            <option value="">Toutes les lignes</option>
-            <option v-for="l in lignesFiltre" :key="l.id" :value="l.id">{{ l.code }} — {{ l.nom }}</option>
-          </select>
-          <button class="export-btn" title="Télécharger le TRS au format Excel" @click="exporterTrs('xlsx')"><FileDown :size="16" /> Excel</button>
-          <button class="export-btn" title="Télécharger le TRS au format PDF" @click="exporterTrs('pdf')"><FileDown :size="16" /> PDF</button>
-          <button class="export-btn" title="Télécharger le TRS au format CSV" @click="exporterTrs('csv')"><FileDown :size="16" /> CSV</button>
-        </template>
-        <template v-else-if="activeTab === 'pareto'">
-          <select v-model="paretoLigneId" class="ligne-select" title="Limiter le Pareto à une ligne" @change="charger">
-            <option value="">Toutes les lignes</option>
-            <option v-for="l in lignesFiltre" :key="l.id" :value="l.id">{{ l.code }} — {{ l.nom }}</option>
-          </select>
-          <button class="export-btn" title="Télécharger le Pareto au format Excel" @click="exporterPareto('xlsx')"><FileDown :size="16" /> Excel</button>
-          <button class="export-btn" title="Télécharger le Pareto au format PDF" @click="exporterPareto('pdf')"><FileDown :size="16" /> PDF</button>
-          <button class="export-btn" title="Télécharger le Pareto au format CSV" @click="exporterPareto('csv')"><FileDown :size="16" /> CSV</button>
-        </template>
-        <template v-else-if="activeTab === 'historique'">
-          <button class="export-btn" title="Télécharger l'historique au format Excel" @click="exporterHistorique('xlsx')"><FileDown :size="16" /> Excel</button>
-          <button class="export-btn" title="Télécharger l'historique au format PDF" @click="exporterHistorique('pdf')"><FileDown :size="16" /> PDF</button>
-          <button class="export-btn" title="Télécharger l'historique au format CSV" @click="exporterHistorique('csv')"><FileDown :size="16" /> CSV</button>
-        </template>
       </div>
+      <select v-model="ligneId" class="ligne-select" title="Limiter le rapport à une ligne" @change="charger">
+        <option value="">Toutes les lignes</option>
+        <option v-for="l in lignesFiltre" :key="l.id" :value="l.id">{{ l.code }} — {{ l.nom }}</option>
+      </select>
+      <button class="export-btn" title="Télécharger ce rapport au format Excel" @click="exporter('xlsx')"><FileDown :size="16" /> Excel</button>
+      <button class="export-btn" title="Télécharger ce rapport au format PDF" @click="exporter('pdf')"><FileDown :size="16" /> PDF</button>
+      <button class="export-btn" title="Télécharger ce rapport au format CSV" @click="exporter('csv')"><FileDown :size="16" /> CSV</button>
     </div>
 
     <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
     <div v-if="isLoading" class="loading">Chargement…</div>
 
     <!-- Par ligne -->
-    <table v-else-if="activeTab === 'par_ligne'" class="rapport-table">
-      <thead>
-        <tr><th>Ligne</th><th>Réel</th><th>Théorique</th><th>Performance</th><th>Palettes</th><th>Temps d'arrêt</th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="r in parLigne" :key="r.ligne_id">
-          <td>{{ r.code }} — {{ r.nom }}</td>
-          <td>{{ r.reel_total.toLocaleString('fr-FR') }}</td>
-          <td>{{ r.theorique_total.toLocaleString('fr-FR') }}</td>
-          <td>{{ r.performance_moyenne !== null ? r.performance_moyenne + '%' : '—' }}</td>
-          <td>{{ r.nb_palettes }}</td>
-          <td>{{ r.temps_arret_min }} min</td>
-        </tr>
-      </tbody>
-    </table>
+    <DataTable
+      v-else-if="activeTab === 'par_ligne'"
+      :columns="COLONNES_PAR_LIGNE" :rows="parLigne" :row-key="r => r.ligne_id" :page-size="100"
+      :default-sort="{ key: 'code', dir: 1 }" empty-text="Aucune ligne sur cette période."
+    />
 
     <!-- Par produit -->
-    <table v-else-if="activeTab === 'par_produit'" class="rapport-table">
-      <thead>
-        <tr><th>Produit</th><th>Quantité totale</th><th>Palettes</th><th>Complètes</th><th>Partielles</th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="r in parProduit" :key="r.produit_id">
-          <td>{{ r.nom }}</td>
-          <td>{{ r.quantite_totale.toLocaleString('fr-FR') }}</td>
-          <td>{{ r.nb_palettes }}</td>
-          <td>{{ r.nb_palettes_completes }}</td>
-          <td>{{ r.nb_palettes_partielles }}</td>
-        </tr>
-        <tr v-if="!parProduit.length">
-          <td colspan="5" class="empty-row">Aucune palette rattachée à un produit sur cette période.</td>
-        </tr>
-      </tbody>
-    </table>
+    <DataTable
+      v-else-if="activeTab === 'par_produit'"
+      :columns="COLONNES_PAR_PRODUIT" :rows="parProduit" :row-key="r => r.produit_id" :page-size="100"
+      :default-sort="{ key: 'quantite_totale', dir: -1 }" empty-text="Aucune palette rattachée à un produit sur cette période."
+    />
 
     <!-- Changements de série (*** AJOUT 2026-09-24, Palier 1 ***) -->
     <div v-else-if="activeTab === 'smed' && smed" class="smed-view">
@@ -355,7 +296,7 @@ const COLONNES_HISTORIQUE = [
     <!-- TRS (*** AJOUT 2026-09-24, Palier 1 ***) -->
     <div v-else-if="activeTab === 'trs' && trs" class="trs-view">
       <div class="kpis">
-        <div :class="['kpi', 'kpi-trs', 'trs-' + classeTrs(trs.usine.trs_pct)]">
+        <div :class="['kpi', 'kpi-trs', 'trs-' + (trs.donnees_insuffisantes ? 'gris' : classeTrs(trs.usine.trs_pct))]">
           <span class="kpi-label">TRS</span>
           <strong>{{ fmtPct1(trs.usine.trs_pct) }}</strong>
           <small>cible {{ String(trs.cible_pct).replace('.', ',') }} %</small>
@@ -375,6 +316,13 @@ const COLONNES_HISTORIQUE = [
         </div>
       </div>
 
+      <p v-if="trs.donnees_insuffisantes" class="warn-banner" role="alert">
+        Peu de scans enregistrés sur la période ({{ trs.nb_palettes }} palette{{ trs.nb_palettes > 1 ? 's' : '' }}) : les pourcentages ne sont pas
+        représentatifs. Un 0 % traduit ici l'absence de scans, pas forcément une contre-performance.
+      </p>
+      <p v-if="trs.nb_lignes_sans_planning > 0 && trs.nb_jours > 0" class="info-banner">
+        {{ trs.nb_lignes_sans_planning }} ligne(s) sans planning sur la période : non évaluées, donc absentes du tableau.
+      </p>
       <p v-if="!trs.qualite_renseignee && trs.nb_jours > 0" class="info-banner">
         Aucun rebut n'a été déclaré sur la période : la Qualité est comptée à 100 % par défaut, elle n'est pas mesurée.
         Les opérateurs déclarent les rebuts au scan de chaque palette (« Rebuts constatés »).
@@ -518,20 +466,7 @@ const COLONNES_HISTORIQUE = [
       <div class="section-card">
         <h2>Performance par atelier</h2>
         <p v-if="!vueDirection.par_atelier.length" class="empty">Aucune donnée sur la période.</p>
-        <table v-else class="rapport-table nested">
-          <thead>
-            <tr><th>Atelier</th><th>Réel</th><th>Théorique</th><th>Performance</th><th>Lignes</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="s in vueDirection.par_atelier" :key="s.section_nom">
-              <td>{{ s.section_nom }}</td>
-              <td>{{ s.reel_total.toLocaleString('fr-FR') }}</td>
-              <td>{{ s.theorique_total.toLocaleString('fr-FR') }}</td>
-              <td>{{ s.performance_moyenne !== null ? s.performance_moyenne + '%' : '—' }}</td>
-              <td>{{ s.nb_lignes }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <DataTable v-else :columns="COLONNES_ATELIER" :rows="vueDirection.par_atelier" :row-key="r => r.section_nom" :page-size="50" empty-text="Aucune donnée sur la période." />
       </div>
 
       <div class="section-card">
@@ -584,7 +519,9 @@ const COLONNES_HISTORIQUE = [
 }
 .tab-btn.active { background: var(--color-brand); color: var(--color-text-inverse); border-color: var(--color-brand); }
 
+.toolbar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-4); }
 .dates { display: flex; align-items: center; gap: var(--space-2); }
+.kpi-trs.trs-gris { border-left-color: var(--color-border); }
 .dates input { height: 36px; padding: 0 var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 
 .export-btn {

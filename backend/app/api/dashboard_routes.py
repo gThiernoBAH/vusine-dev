@@ -200,12 +200,16 @@ def _libelle_produits_du_jour(db: Session, items) -> Optional[str]:
 
 
 @router.get("/andon", response_model=AndonOut)
-def get_andon(db: Session = Depends(get_db), user: User = Depends(require_andon)):
+def get_andon(section: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(require_andon)):
+    """`section` (optionnel) : une TV par atelier sans compte dédié (`/andon?section=SAVON`). Un
+    compte avec section_scope reste enfermé dans SA section : le paramètre ne peut jamais
+    l'élargir."""
     jour = date.today()
     maintenant = datetime.now()
+    section_affichee = user.section_scope or (section or None)
     query = db.query(LigneCache).filter(LigneCache.actif.is_(True))
-    if user.section_scope:
-        query = query.filter(LigneCache.section_nom == user.section_scope)
+    if section_affichee:
+        query = query.filter(LigneCache.section_nom == section_affichee)
     lignes = query.order_by(LigneCache.code).all()
     ids = [l.id for l in lignes]
 
@@ -249,4 +253,8 @@ def get_andon(db: Session = Depends(get_db), user: User = Depends(require_andon)
         total_reel=total_reel, total_theorique=total_theorique,
         performance_usine_pct=round(total_reel / total_theorique * 100) if total_theorique > 0 else None,
     )
-    return AndonOut(genere_a=maintenant.isoformat(timespec="seconds"), jour=jour.isoformat(), resume=resume, lignes=sorties)
+    nb_palettes = db.query(Palette).filter(
+        Palette.ligne_id.in_(ids), Palette.created_at >= datetime.combine(jour, datetime.min.time())
+    ).count() if ids else 0
+    return AndonOut(genere_a=maintenant.isoformat(timespec="seconds"), jour=jour.isoformat(), resume=resume, lignes=sorties,
+                    nb_palettes_jour=nb_palettes, aucun_scan_aujourdhui=(nb_palettes == 0), section=section_affichee)

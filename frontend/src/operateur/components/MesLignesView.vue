@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import apiClient from '@/api/client'
 import QrScanner from 'qr-scanner'
 import QrScannerWorkerPath from 'qr-scanner/qr-scanner-worker.min.js?url'
-import { ChevronRight, QrCode, X, Keyboard, History } from 'lucide-vue-next'
+import { ChevronRight, QrCode, X, Keyboard, History, TrendingUp } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 
 QrScanner.WORKER_PATH = QrScannerWorkerPath
@@ -14,6 +14,10 @@ const router = useRouter()
 // *** AJOUT 2026-09-23 *** : accès à son propre historique de scans -- navigation
 // directe (pas de passage par l'emit select-ligne/back de TabletteView, qui suppose
 // une LIGNE) puisque ce n'est pas une ligne mais un écran séparé.
+function ouvrirPerformances() {
+  router.push({ name: 'performances-operateur' })
+}
+
 function ouvrirHistorique() {
   router.push({ name: 'historique-operateur' })
 }
@@ -102,6 +106,10 @@ onUnmounted(() => {
       <div class="header-actions">
         <button class="historique-btn" title="Voir mes scans passés, toutes lignes confondues" @click="ouvrirHistorique">
           <History :size="18" />
+        </button>
+        <!-- *** AJOUT 2026-09-24 *** : « Voir mes performances » -- mes heures et le résultat de mon équipe. -->
+        <button class="historique-btn" title="Voir mes performances : mes heures et le résultat de mon équipe" aria-label="Mes performances" @click="ouvrirPerformances">
+          <TrendingUp :size="18" />
         </button>
         <button class="scan-btn" @click="ouvrirScan"><QrCode :size="18" /> Scanner</button>
       </div>

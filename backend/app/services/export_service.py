@@ -285,3 +285,59 @@ def generer_pdf_smed(smed) -> bytes:
 
 def generer_csv_smed(smed) -> bytes:
     return h.build_csv(_df_smed(smed))
+
+
+# =============================================================
+# *** AJOUT 2026-09-24 *** : exports « Par produit » et « Vue Direction » (n'en avaient pas),
+# pour uniformiser les onglets Rapports (mêmes trois boutons partout).
+# =============================================================
+
+def _df_produits(rows: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame([{
+        "Produit": r["nom"], "Quantité totale": r["quantite_totale"], "Palettes": r["nb_palettes"],
+        "Complètes": r["nb_palettes_completes"], "Partielles": r["nb_palettes_partielles"],
+    } for r in rows], columns=["Produit", "Quantité totale", "Palettes", "Complètes", "Partielles"])
+
+
+def generer_excel_produits(rows: list[dict], date_debut: date, date_fin: date) -> bytes:
+    return h.build_excel("Rapport par produit", _df_produits(rows), sous_titre=f"Du {date_debut.isoformat()} au {date_fin.isoformat()}")
+
+
+def generer_pdf_produits(rows: list[dict], date_debut: date, date_fin: date) -> bytes:
+    return h.build_pdf("Rapport par produit", _df_produits(rows), sous_titre=f"Période : {date_debut.isoformat()} au {date_fin.isoformat()}")
+
+
+def generer_csv_produits(rows: list[dict], date_debut: date, date_fin: date) -> bytes:
+    return h.build_csv(_df_produits(rows))
+
+
+COLONNES_DIRECTION = ["Rubrique", "Élément", "Réel", "Théorique", "Performance (%)", "Lignes", "Durée (min)"]
+
+
+def _df_direction(d: dict) -> pd.DataFrame:
+    """Vue Direction à plat : une seule table, une rubrique par bloc de l'écran."""
+    lignes = []
+    for rubrique, items in (("Top 5 lignes", d["top"]), ("Flop 5 lignes", d["flop"])):
+        for x in items:
+            lignes.append({"Rubrique": rubrique, "Élément": x["code"], "Performance (%)": x["performance_moyenne"]})
+    for x in d["par_atelier"]:
+        lignes.append({"Rubrique": "Performance par atelier", "Élément": x["section_nom"], "Réel": x["reel_total"],
+                       "Théorique": x["theorique_total"], "Performance (%)": x["performance_moyenne"], "Lignes": x["nb_lignes"]})
+    for x in d["pertes_par_cause"]:
+        lignes.append({"Rubrique": "Pertes par cause", "Élément": x["cause"], "Durée (min)": x["duree_min"]})
+    for x in d["evolution_quotidienne"]:
+        lignes.append({"Rubrique": "Évolution quotidienne", "Élément": x["jour"].strftime("%d/%m/%Y") if hasattr(x["jour"], "strftime") else str(x["jour"]),
+                       "Performance (%)": x["performance_pct"]})
+    return pd.DataFrame(lignes, columns=COLONNES_DIRECTION)
+
+
+def generer_excel_direction(d: dict, date_debut: date, date_fin: date) -> bytes:
+    return h.build_excel("Vue Direction", _df_direction(d), sous_titre=f"Du {date_debut.isoformat()} au {date_fin.isoformat()}", decimales={"Performance (%)": 0})
+
+
+def generer_pdf_direction(d: dict, date_debut: date, date_fin: date) -> bytes:
+    return h.build_pdf("Vue Direction", _df_direction(d), sous_titre=f"Période : {date_debut.isoformat()} au {date_fin.isoformat()}", decimales={"Performance (%)": 0})
+
+
+def generer_csv_direction(d: dict, date_debut: date, date_fin: date) -> bytes:
+    return h.build_csv(_df_direction(d))

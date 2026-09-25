@@ -77,6 +77,7 @@ class HistoriqueScanOut(BaseModel):
     created_at: datetime
     ligne_id: int
     ligne_code: str
+    section_nom: Optional[str] = None   # *** AJOUT 2026-09-25 *** : filtre par section côté opérateur
     produit_nom: Optional[str] = None  # absent si la palette n'a pas de planning_detail_id
     numero_lot: str
     nb_cartons: int
@@ -164,6 +165,9 @@ class TrsLigneOut(BaseModel):
     pertes_arrets_pieces: int = 0
     pertes_cadence_pieces: int = 0    # négatif = la ligne a dépassé sa cadence de référence
     pertes_rebuts_pieces: int = 0
+    # Production attendue PENDANT le temps de marche (planifié x disponibilité) -- base de la
+    # « performance » des rapports et du rapport matinal (2026-09-24).
+    pieces_theoriques: int = 0
 
 
 class TrsJourOut(BaseModel):
@@ -186,6 +190,11 @@ class TrsOut(BaseModel):
     # Pièces palettisées un jour TERMINÉ sans planning pour la ligne, ou un jour fermé : hors
     # TRS, signalées pour que l'écart soit visible. Le jour en cours n'est jamais compté ici.
     pieces_hors_planning: int = 0
+    # 2026-09-24 : palettes de la période, lignes du périmètre sans aucun planning, et drapeau
+    # « données insuffisantes » (peu de scans : les pourcentages ne sont pas représentatifs).
+    nb_palettes: int = 0
+    nb_lignes_sans_planning: int = 0
+    donnees_insuffisantes: bool = False
     usine: TrsLigneOut
     lignes: list[TrsLigneOut] = []
     evolution: list[TrsJourOut] = []

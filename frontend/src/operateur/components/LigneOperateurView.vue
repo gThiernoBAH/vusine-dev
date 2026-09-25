@@ -79,6 +79,7 @@ function ouvrirFormulairePalette() {
   palettePartielle.value = false
   motifPartielle.value = ''
   nbRebuts.value = null
+  erreursChamps.value = { lot: '', cartons: '', colisage: '' }
   nbCartons.value = itemSelectionne.value.cartons_par_palette ?? null
   colisageCarton.value = itemSelectionne.value.colisage_par_carton ?? null
   paletteError.value = ''
@@ -90,8 +91,32 @@ const quantiteTotale = computed(() => {
   return nbCartons.value * colisageCarton.value
 })
 
+// *** AJOUT 2026-09-24 *** : avant, un champ manquant faisait sortir de la validation SANS AUCUN
+// message -- l'opérateur ne savait pas pourquoi « Valider la palette » ne réagissait pas.
+// Maintenant : message sous le champ concerné, champ en rouge, focus dessus.
+const erreursChamps = ref({ lot: '', cartons: '', colisage: '' })
+const champLot = ref(null)
+const champCartons = ref(null)
+const champColisage = ref(null)
+
+function verifierChamps() {
+  const e = {
+    lot: numeroLot.value?.trim() ? '' : 'Saisissez le numéro de lot.',
+    cartons: nbCartons.value >= 1 ? '' : 'Indiquez le nombre de cartons (au moins 1).',
+    colisage: colisageCarton.value >= 1 ? '' : 'Indiquez le colisage par carton (au moins 1).',
+  }
+  erreursChamps.value = e
+  const premier = e.lot ? champLot : e.cartons ? champCartons : e.colisage ? champColisage : null
+  if (premier?.value) {
+    premier.value.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+    premier.value.focus?.()
+  }
+  return !(e.lot || e.cartons || e.colisage)
+}
+
 async function validerPalette() {
-  if (!numeroLot.value || !nbCartons.value || !colisageCarton.value || paletteSubmitting.value) return
+  if (paletteSubmitting.value) return
+  if (!verifierChamps()) return
   paletteSubmitting.value = true
   paletteError.value = ''
   try {
@@ -286,17 +311,23 @@ watch(screen, (val) => {
 
         <label class="field">
           <span>N° de lot</span>
-          <input v-model="numeroLot" type="text" placeholder="Numéro de lot" />
+          <input ref="champLot" v-model="numeroLot" type="text" placeholder="Numéro de lot" :class="{ invalide: erreursChamps.lot }"
+                 :aria-invalid="!!erreursChamps.lot" @input="erreursChamps.lot = ''" />
+          <small v-if="erreursChamps.lot" class="erreur-champ" role="alert">{{ erreursChamps.lot }}</small>
         </label>
 
         <label class="field">
           <span>Cartons sur la palette</span>
-          <input v-model.number="nbCartons" type="number" min="1" :readonly="!palettePartielle" />
+          <input ref="champCartons" v-model.number="nbCartons" type="number" min="1" :readonly="!palettePartielle" :class="{ invalide: erreursChamps.cartons }"
+                 :aria-invalid="!!erreursChamps.cartons" @input="erreursChamps.cartons = ''" />
+          <small v-if="erreursChamps.cartons" class="erreur-champ" role="alert">{{ erreursChamps.cartons }}</small>
         </label>
 
         <label class="field">
           <span>Colisage / carton</span>
-          <input v-model.number="colisageCarton" type="number" min="1" />
+          <input ref="champColisage" v-model.number="colisageCarton" type="number" min="1" :class="{ invalide: erreursChamps.colisage }"
+                 :aria-invalid="!!erreursChamps.colisage" @input="erreursChamps.colisage = ''" />
+          <small v-if="erreursChamps.colisage" class="erreur-champ" role="alert">{{ erreursChamps.colisage }}</small>
         </label>
 
         <label class="field">
@@ -556,6 +587,8 @@ h2 { font-size: var(--font-size-base); margin: 0 0 var(--space-3); }
 
 .field textarea { padding: var(--space-3); min-height: 80px; }
 
+.field input.invalide { border-color: var(--color-rouge); background: var(--color-rouge-bg); }
+.erreur-champ { color: var(--color-rouge); font-size: var(--font-size-sm); font-weight: 600; margin-top: 4px; }
 .field input[readonly] { background: var(--color-bg); color: var(--color-text-muted); }
 
 .quantite-totale {

@@ -15,8 +15,19 @@ from ..schemas.entities import (
 )
 from .auth_routes import get_current_user, require_permission
 from ..services.ligne_helpers import get_planning_du_jour
+from ..services.performance_service import _bornes_poste_du_jour
 
 router = APIRouter(prefix="/entities", tags=["entities"])
+
+
+def _heure_debut_poste_str(db: Session) -> str | None:
+    """*** AJOUT 2026-09-25 *** : heure de début du poste AUJOURD'HUI (pas un pointage
+    individuel -- on n'a pas cette donnée -- juste l'horaire du poste, identique pour
+    toute la ligne), pour la colonne "Heure début" de l'écran Équipe sur la ligne."""
+    bornes = _bornes_poste_du_jour(db, date.today())
+    if not bornes or bornes.get("ferme") or not bornes.get("heure_debut"):
+        return None
+    return bornes["heure_debut"].strftime("%H:%M")
 
 
 @router.get("/causes-arret", response_model=list[CauseArretOut])
@@ -123,6 +134,7 @@ def get_ligne_detail(
         items_planning_jour=items_out,
         equipements=[EquipementOut.model_validate(e) for e in equipements],
         personnel=personnel,
+        poste_heure_debut=_heure_debut_poste_str(db),
     )
 
 

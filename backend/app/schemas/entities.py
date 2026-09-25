@@ -72,3 +72,4 @@ class LigneDetailOut(BaseModel):
     items_planning_jour: list[PlanningItemOut] = []
     equipements: list[EquipementOut] = []
     personnel: list[PersonnelLigneOut] = []
+    poste_heure_debut: Optional[str] = None   # *** AJOUT 2026-09-25 *** : heure de DÉBUT DE POSTE du jour (pas un pointage individuel), "HH:MM" ou None si usine fermée/non configurée

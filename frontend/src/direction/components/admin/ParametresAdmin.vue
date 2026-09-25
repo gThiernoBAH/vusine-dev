@@ -26,6 +26,10 @@ const DEFINITIONS = [
     hint: "Libellé exact de la cause d'arrêt (Administration → Causes d'arrêt) qui désigne un changement de série. Défaut : « Changement produit »." },
   { key: 'rapport_matinal_heure', label: 'Heure du rapport matinal', suffix: '', type: 'text',
     hint: "Format HH:MM. L'envoi automatique doit aussi être activé côté serveur (RAPPORT_MATINAL_ENABLED). Défaut : 07:00." },
+  { key: 'scoring_equipe_effectif_min', label: "Effectif minimal d'une équipe affichée", suffix: 'pers.', min: 0, step: 1,
+    hint: "Sous cet effectif, le score de la ligne est masqué (une équipe de 1 ou 2 personnes désignerait quelqu'un). 0 = aucun masquage (état actuel). 3 est conseillé une fois les affectations saisies." },
+  { key: 'donnees_min_palettes', label: 'Palettes minimales pour des scores représentatifs', suffix: 'palettes', min: 0, step: 1,
+    hint: "Sous ce nombre de palettes sur la période, TRS et scores d'équipe sont grisés avec un avertissement (adoption des scans insuffisante). Défaut : 10." },
   { key: 'rapport_matinal_jours', label: 'Jours du rapport matinal', suffix: '', type: 'text',
     hint: "Numéros des jours d'envoi séparés par des virgules : 1 = lundi … 7 = dimanche. Défaut : 1,2,3,4,5,6." },
 ]
@@ -108,7 +112,7 @@ async function enregistrer(p) {
 
 <style scoped>
 .parametres-admin { display: flex; flex-direction: column; gap: var(--space-4); }
-.hint { font-size: var(--font-size-sm); color: var(--color-text-muted); max-width: 640px; margin: 0; }
+.hint { font-size: var(--font-size-sm); color: var(--color-text-muted); max-width: 900px; margin: 0; }
 .error-banner { background: var(--color-rouge-bg); color: var(--color-rouge); padding: var(--space-3); border-radius: var(--radius-md); }
 .success-banner { background: var(--color-vert-bg); color: var(--color-vert); padding: var(--space-3); border-radius: var(--radius-md); }
 .loading { color: var(--color-text-muted); }

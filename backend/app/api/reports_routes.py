@@ -1,5 +1,6 @@
 from datetime import date, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Response
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
@@ -19,7 +20,9 @@ from ..services.export_service import (
     generer_excel_pareto, generer_pdf_pareto, generer_csv_pareto,
     generer_excel_trs, generer_pdf_trs, generer_csv_trs,
     generer_excel_smed, generer_pdf_smed, generer_csv_smed,
-    generer_excel_rapport, generer_pdf_rapport,
+    generer_excel_rapport, generer_pdf_rapport, generer_csv_rapport,
+    generer_excel_produits, generer_pdf_produits, generer_csv_produits,
+    generer_excel_direction, generer_pdf_direction, generer_csv_direction,
     generer_excel_historique_scans, generer_pdf_historique_scans, generer_csv_historique_scans,
 )
 from .auth_routes import require_permission, get_current_user, require_admin
@@ -40,78 +43,88 @@ def _voit_tous_les_operateurs(db: Session, user: User) -> bool:
     ).first() is not None
 
 
-@router.get("/par-ligne", response_model=list[RapportLigneOut])
-def get_rapport_par_ligne(
-    date_debut: date = None,
-    date_fin: date = None,
-    db: Session = Depends(get_db),
-    _user: User = Depends(require_permission("view_vue_usine")),
-):
+def _periode_rapport(date_debut, date_fin):
     date_fin = date_fin or date.today()
     date_debut = date_debut or (date_fin - timedelta(days=7))
-    return rapport_par_ligne(db, date_debut, date_fin)
+    return date_debut, date_fin
+
+
+def _reponse_export(contenu: bytes, format: str, base: str, debut, fin) -> Response:
+    media = {"csv": "text/csv", "pdf": "application/pdf",
+             "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}[format]
+    return Response(content=contenu, media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{base}_{debut}_{fin}.{format}"'})
+
+
+def _verifier_format(format: str):
+    if format not in ("xlsx", "pdf", "csv"):
+        raise HTTPException(status_code=422, detail="format doit être 'xlsx', 'pdf' ou 'csv'.")
+
+
+@router.get("/par-ligne", response_model=list[RapportLigneOut])
+def get_rapport_par_ligne(
+    date_debut: date = None, date_fin: date = None, ligne_id: int | None = None,
+    db: Session = Depends(get_db), user: User = Depends(require_permission("view_vue_usine")),
+):
+    date_debut, date_fin = _periode_rapport(date_debut, date_fin)
+    return rapport_par_ligne(db, date_debut, date_fin, ligne_id=ligne_id, section_scope=user.section_scope)
 
 
 @router.get("/par-ligne/export")
 def export_rapport_par_ligne(
-    format: str,
-    date_debut: date = None,
-    date_fin: date = None,
-    db: Session = Depends(get_db),
-    _user: User = Depends(require_permission("view_vue_usine")),
+    format: str, date_debut: date = None, date_fin: date = None, ligne_id: int | None = None,
+    db: Session = Depends(get_db), user: User = Depends(require_permission("view_vue_usine")),
 ):
-    """Export Excel/PDF du rapport par ligne (slide 14 -- dernier point de l'audit)."""
-    if format not in ("xlsx", "pdf"):
-        raise HTTPException(status_code=422, detail="format doit être 'xlsx' ou 'pdf'.")
-
-    date_fin = date_fin or date.today()
-    date_debut = date_debut or (date_fin - timedelta(days=7))
-    rows = rapport_par_ligne(db, date_debut, date_fin)
-    # *** CORRECTIF 2026-09-17 *** : export_service.py attend des dicts indexables
-    # (r['code'], r['nom'], ...) -- rapport_par_ligne renvoie des objets Pydantic
-    # (RapportLigneOut), non subscriptables tels quels. D'où le
-    # "TypeError: 'RapportLigneOut' object is not subscriptable" à l'export.
-    rows_dict = [r.model_dump() for r in rows]
-
-    if format == "xlsx":
-        contenu = generer_excel_rapport(rows_dict, date_debut, date_fin)
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        nom_fichier = f"rapport_vusine_{date_debut}_{date_fin}.xlsx"
-    else:
-        contenu = generer_pdf_rapport(rows_dict, date_debut, date_fin)
-        media_type = "application/pdf"
-        nom_fichier = f"rapport_vusine_{date_debut}_{date_fin}.pdf"
-
-    return Response(
-        content=contenu,
-        media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{nom_fichier}"'},
-    )
+    """Export Excel/PDF/CSV du rapport par ligne (CSV ajouté le 2026-09-24)."""
+    _verifier_format(format)
+    date_debut, date_fin = _periode_rapport(date_debut, date_fin)
+    # export_service attend des dicts indexables (r['code'], ...), pas des objets Pydantic.
+    rows = [r.model_dump() for r in rapport_par_ligne(db, date_debut, date_fin, ligne_id=ligne_id, section_scope=user.section_scope)]
+    gen = {"xlsx": generer_excel_rapport, "pdf": generer_pdf_rapport, "csv": generer_csv_rapport}[format]
+    return _reponse_export(gen(rows, date_debut, date_fin), format, "rapport_vusine", date_debut, date_fin)
 
 
 @router.get("/par-produit", response_model=list[RapportProduitOut])
 def get_rapport_par_produit(
-    date_debut: date = None,
-    date_fin: date = None,
-    db: Session = Depends(get_db),
-    _user: User = Depends(require_permission("view_vue_usine")),
+    date_debut: date = None, date_fin: date = None, ligne_id: int | None = None,
+    db: Session = Depends(get_db), user: User = Depends(require_permission("view_vue_usine")),
 ):
     """*** NOUVEAU 2026-09-18 *** : écran Rapports, onglet 'Par produit' (slide 14)."""
-    date_fin = date_fin or date.today()
-    date_debut = date_debut or (date_fin - timedelta(days=7))
-    return rapport_par_produit(db, date_debut, date_fin)
+    date_debut, date_fin = _periode_rapport(date_debut, date_fin)
+    return rapport_par_produit(db, date_debut, date_fin, ligne_id=ligne_id, section_scope=user.section_scope)
+
+
+@router.get("/par-produit/export")
+def export_rapport_par_produit(
+    format: str, date_debut: date = None, date_fin: date = None, ligne_id: int | None = None,
+    db: Session = Depends(get_db), user: User = Depends(require_permission("view_vue_usine")),
+):
+    _verifier_format(format)
+    date_debut, date_fin = _periode_rapport(date_debut, date_fin)
+    rows = [r.model_dump() for r in rapport_par_produit(db, date_debut, date_fin, ligne_id=ligne_id, section_scope=user.section_scope)]
+    gen = {"xlsx": generer_excel_produits, "pdf": generer_pdf_produits, "csv": generer_csv_produits}[format]
+    return _reponse_export(gen(rows, date_debut, date_fin), format, "rapport_produits", date_debut, date_fin)
 
 
 @router.get("/vue-direction", response_model=RapportDirectionOut)
 def get_rapport_vue_direction(
-    date_debut: date = None,
-    date_fin: date = None,
-    db: Session = Depends(get_db),
-    _user: User = Depends(require_permission("view_vue_usine")),
+    date_debut: date = None, date_fin: date = None, ligne_id: int | None = None,
+    db: Session = Depends(get_db), user: User = Depends(require_permission("view_vue_usine")),
 ):
-    date_fin = date_fin or date.today()
-    date_debut = date_debut or (date_fin - timedelta(days=7))
-    return rapport_vue_direction(db, date_debut, date_fin)
+    date_debut, date_fin = _periode_rapport(date_debut, date_fin)
+    return rapport_vue_direction(db, date_debut, date_fin, ligne_id=ligne_id, section_scope=user.section_scope)
+
+
+@router.get("/vue-direction/export")
+def export_rapport_vue_direction(
+    format: str, date_debut: date = None, date_fin: date = None, ligne_id: int | None = None,
+    db: Session = Depends(get_db), user: User = Depends(require_permission("view_vue_usine")),
+):
+    _verifier_format(format)
+    date_debut, date_fin = _periode_rapport(date_debut, date_fin)
+    d = rapport_vue_direction(db, date_debut, date_fin, ligne_id=ligne_id, section_scope=user.section_scope).model_dump()
+    gen = {"xlsx": generer_excel_direction, "pdf": generer_pdf_direction, "csv": generer_csv_direction}[format]
+    return _reponse_export(gen(d, date_debut, date_fin), format, "vue_direction", date_debut, date_fin)
 
 # =============================================================
 # *** AJOUT 2026-09-23 *** : historique des scans (palettes) -- écran Rapports côté
@@ -324,9 +337,13 @@ def export_changements_serie(
 # =============================================================
 
 @router.get("/matinal/apercu")
-def apercu_rapport_matinal(db: Session = Depends(get_db), _admin: User = Depends(require_admin)):
-    """Le rapport tel qu'il partirait maintenant, sans rien envoyer."""
-    rapport = matinal.construire_rapport(db)
+def apercu_rapport_matinal(
+    jour: Optional[date] = Query(None, description="Rejoue le rapport tel qu'il serait parti CE matin-là (défaut : aujourd'hui). Cf. construire_rapport : cherche en arrière depuis `jour` le dernier jour évaluable, jamais un calcul en direct d'une journée en cours."),
+    db: Session = Depends(get_db), _admin: User = Depends(require_admin),
+):
+    """Le rapport tel qu'il partirait maintenant (ou tel qu'il serait parti le matin de
+    `jour`), sans rien envoyer."""
+    rapport = matinal.construire_rapport(db, aujourd_hui=jour) if jour else matinal.construire_rapport(db)
     dest = matinal.destinataires(db)
     base = {
         "nb_destinataires_email": len(dest["email"]), "nb_destinataires_telegram": len(dest["telegram"]),

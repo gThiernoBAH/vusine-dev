@@ -97,8 +97,7 @@ const LABELS_TYPE = { ferie: 'Férié', horaire_special: 'Horaire dérogatoire',
 <template>
   <div class="calendrier-admin">
     <p class="hint">
-      Référentiel utilisé pour le calcul du théorique (slide 7 du cahier des charges) :
-      le théorique ne s'accumule qu'entre l'heure de début et de fin de poste, et se fige
+      Référentiel utilisé pour le calcul du théorique (slide 7 du cahier des charges) : le théorique ne s'accumule qu'entre l'heure de début et de fin de poste, et se fige
       pendant la pause -- sans ce référentiel renseigné, le calcul retombe sur un mode
       dégradé (borné à minuit uniquement).
     </p>
@@ -194,7 +193,7 @@ const LABELS_TYPE = { ferie: 'Férié', horaire_special: 'Horaire dérogatoire',
 
 <style scoped>
 .calendrier-admin { display: flex; flex-direction: column; gap: var(--space-4); }
-.hint { font-size: var(--font-size-sm); color: var(--color-text-muted); max-width: 680px; margin: 0; }
+.hint { font-size: var(--font-size-sm); color: var(--color-text-muted); max-width: 940px; margin: 0; }
 .error-banner { background: var(--color-rouge-bg); color: var(--color-rouge); padding: var(--space-3); border-radius: var(--radius-md); }
 .loading { color: var(--color-text-muted); }
 

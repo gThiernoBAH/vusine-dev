@@ -1,8 +1,21 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import apiClient from '@/api/client'
 import StatutBadge from './StatutBadge.vue'
+import DataTable from '@/components/DataTable.vue'
 import { ArrowLeft, Wrench, Users, PauseCircle, Package, Pencil, ClipboardList } from 'lucide-vue-next'
+
+const router = useRouter()
+
+// *** AJOUT 2026-09-25 *** : colonnes triables (DataTable) pour "Équipe sur la ligne".
+const COLONNES_PERSONNEL = [
+  { key: 'matricule', label: 'Matricule', format: v => v || '—' },
+  { key: 'nom', label: 'Nom' },
+  { key: 'user_type', label: 'Fonction' },
+  { key: 'categorie_personnel', label: 'Statut' },
+  { key: 'heure_debut', label: 'Heure début', sortable: false },
+]
 
 const props = defineProps({
   ligneId: { type: Number, required: true },
@@ -26,6 +39,15 @@ let pollHandle = null
 
 const user = JSON.parse(sessionStorage.getItem('user') || '{}')
 const peutCorriger = user.is_admin || (user.permissions || []).includes('correction_palette')
+
+// *** AJOUT 2026-09-25 *** : compteurs par fonction pour l'en-tête "Équipe sur la ligne".
+const compteursPersonnel = computed(() => {
+  const liste = detail.value?.personnel || []
+  return {
+    operateurs: liste.filter(p => p.user_type === 'operateur').length,
+    ouvriers: liste.filter(p => p.user_type === 'ouvrier').length,
+  }
+})
 
 // Édition d'une palette (permission correction_palette, cf. action_routes.corriger_palette)
 const paletteEnEdition = ref(null)
@@ -191,14 +213,26 @@ watch(jourSelectionne, () => {
         </div>
 
         <div class="section-card">
-          <h2><Users :size="16" /> Personnel affecté</h2>
+          <h2><Users :size="16" /> Équipe sur la ligne</h2>
+          <!-- *** AJOUT 2026-09-25 *** : compteurs par fonction + tableau détaillé (matricule, fonction,
+               statut, poste), demandé côté Direction. Purement du roster (qui est affecté), aucune donnée
+               de performance individuelle ici -- pas la même question que le classement nominatif. -->
+          <div v-if="detail.personnel.length" class="equipe-compteurs">
+            <div class="compteur"><strong>{{ compteursPersonnel.operateurs }}</strong><span>Opérateur(s)</span></div>
+            <div class="compteur"><strong>{{ compteursPersonnel.ouvriers }}</strong><span>Ouvrier(s)</span></div>
+            <div class="compteur compteur-total"><strong>{{ detail.personnel.length }}</strong><span>Total personnel</span></div>
+          </div>
           <p v-if="!detail.personnel.length" class="empty">Aucun personnel affecté actuellement.</p>
-          <ul v-else class="item-list">
-            <li v-for="p in detail.personnel" :key="p.user_id">
-              <div class="item-title">{{ p.nom }}</div>
-              <div class="item-sub">{{ p.matricule }} · {{ p.user_type }} · {{ p.categorie_personnel || '—' }}</div>
-            </li>
-          </ul>
+          <DataTable v-else :columns="COLONNES_PERSONNEL" :rows="detail.personnel" :row-key="p => p.user_id"
+                     :default-sort="{ key: 'nom', dir: 1 }" :page-size="50" empty-text="—">
+            <template #cell-user_type="{ row }">{{ row.user_type === 'operateur' ? 'Opérateur' : row.user_type === 'ouvrier' ? 'Ouvrier' : row.user_type }}</template>
+            <template #cell-categorie_personnel="{ row }">{{ row.categorie_personnel || '—' }}</template>
+            <template #cell-heure_debut="{ }">{{ detail.poste_heure_debut || '—' }}</template>
+          </DataTable>
+          <p v-if="detail.personnel.length" class="hint" title="Horaire du poste du jour, identique pour toute la ligne -- pas un pointage individuel.">
+            « Heure début » = début du poste du jour, pas un pointage par personne.
+          </p>
+          <button class="btn secondary btn-gerer-equipe" @click="router.push({ path: '/cockpit/admin', query: { onglet: 'affectations' } })">Gérer l'équipe (Affectations)</button>
         </div>
       </div>
 
@@ -443,6 +477,15 @@ watch(jourSelectionne, () => {
 }
 
 .item-list li:last-child { border-bottom: none; padding-bottom: 0; }
+
+/* *** AJOUT 2026-09-25 *** : compteurs par fonction + bouton de gestion, écran "Équipe sur la ligne". */
+.equipe-compteurs { display: flex; gap: var(--space-3); margin-bottom: var(--space-3); }
+.compteur { flex: 1; background: var(--color-bg); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); text-align: center; }
+.compteur strong { display: block; font-size: var(--font-size-lg); }
+.compteur span { font-size: var(--font-size-xs); color: var(--color-text-muted); }
+.compteur-total { background: var(--color-brand-light); }
+.btn-gerer-equipe { margin-top: var(--space-3); width: 100%; }
+.hint { color: var(--color-text-muted); font-size: var(--font-size-xs); margin-top: var(--space-2); }
 
 .item-title { font-weight: 600; font-size: var(--font-size-sm); }
 .item-sub { font-size: var(--font-size-xs); color: var(--color-text-muted); }

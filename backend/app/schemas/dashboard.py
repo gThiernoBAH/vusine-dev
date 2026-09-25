@@ -78,3 +78,8 @@ class AndonOut(BaseModel):
     jour: str
     resume: VueUsineResume
     lignes: list[AndonLigneOut]  # déjà triées : les problèmes d'abord
+    # 2026-09-24 : aucun scan aujourd'hui sur le périmètre -> les retards affichés ne sont pas
+    # représentatifs (adoption des scans), l'écran le dit au lieu d'alarmer.
+    nb_palettes_jour: int = 0
+    aucun_scan_aujourdhui: bool = False
+    section: Optional[str] = None   # section affichée (compte kiosque d'atelier, ou ?section=)

@@ -16,11 +16,12 @@ const isLoading = ref(true)
 const errorMessage = ref('')
 const envoi = ref(null)          // résultat du dernier envoi
 const envoiEnCours = ref(false)
+const jourChoisi = ref('')       // *** AJOUT 2026-09-25 *** : vide = aujourd'hui (comportement d'origine)
 
 async function charger() {
   isLoading.value = true
   try {
-    apercu.value = (await apiClient.get('/rapports/matinal/apercu')).data
+    apercu.value = (await apiClient.get('/rapports/matinal/apercu', { params: jourChoisi.value ? { jour: jourChoisi.value } : {} })).data
     errorMessage.value = ''
   } catch (e) {
     errorMessage.value = e.response?.data?.detail || "Impossible de charger l'aperçu."
@@ -58,6 +59,14 @@ async function envoyer(mode) {
       Les destinataires se choisissent dans <strong>Personnel</strong> (modifier un compte), l'heure et les jours dans <strong>Paramètres</strong>.
     </p>
 
+    <!-- *** AJOUT 2026-09-25 *** : revoir le rapport tel qu'il serait parti un matin passé (dernier jour évaluable
+         cherché en arrière depuis cette date) -- ne recalcule jamais une journée en cours. -->
+    <div class="date-choisie">
+      <label for="rapport-jour">Voir le rapport tel qu'il serait parti le :</label>
+      <input id="rapport-jour" type="date" v-model="jourChoisi" :max="new Date().toISOString().slice(0, 10)" @change="charger" />
+      <button v-if="jourChoisi" class="btn secondary" @click="jourChoisi = ''; charger()">Aujourd'hui</button>
+    </div>
+
     <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
     <div v-if="isLoading" class="loading">Chargement…</div>
 
@@ -65,7 +74,7 @@ async function envoyer(mode) {
       <div class="statut-ligne">
         <span :class="['pastille', apercu.envoi_automatique_actif ? 'on' : 'off']"></span>
         <span v-if="apercu.envoi_automatique_actif">Envoi automatique <strong>actif</strong>.</span>
-        <span v-else>Envoi automatique <strong>inactif</strong> : il s'active côté serveur (RAPPORT_MATINAL_ENABLED). Les boutons ci-dessous fonctionnent quand même.</span>
+        <span v-else>Envoi automatique <strong>inactif</strong> : pour l'activer, ajoutez <code>RAPPORT_MATINAL_ENABLED=true</code> et <code>SNAPSHOT_SCHEDULER_ENABLED=true</code> dans <code>backend/.env</code>, puis redémarrez le serveur. Les boutons ci-dessous fonctionnent quand même.</span>
       </div>
       <p class="destinataires">
         Destinataires : <strong>{{ apercu.nb_destinataires_email }}</strong> par email, <strong>{{ apercu.nb_destinataires_telegram }}</strong> par Telegram.
@@ -73,20 +82,29 @@ async function envoyer(mode) {
 
       <p v-if="!apercu.disponible" class="warn-banner">{{ apercu.message }}</p>
 
-      <template v-else>
-        <div class="actions">
-          <button class="btn secondary" :disabled="envoiEnCours" @click="envoyer('test')">M'envoyer un test</button>
-          <button class="btn primary" :disabled="envoiEnCours || (!apercu.nb_destinataires_email && !apercu.nb_destinataires_telegram)" @click="envoyer('tous')">Envoyer maintenant à tous</button>
-        </div>
+      <!-- CORRIGÉ 2026-09-24 : les boutons n'apparaissaient que si des données existaient, donc le test
+           d'envoi restait introuvable au premier essai. Ils sont désormais toujours visibles ; le serveur
+           explique la raison quand il n'y a rien à envoyer. -->
+      <!-- *** AJOUT 2026-09-25 *** : envoyer un rapport pour une date passée n'a pas de sens opérationnel
+           (ni pour les destinataires, ni pour le marquage "envoyé aujourd'hui") -- boutons masqués tant
+           qu'une date passée est consultée, remplacés par une note. -->
+      <div v-if="!jourChoisi" class="actions">
+        <button class="btn secondary" :disabled="envoiEnCours" @click="envoyer('test')">M'envoyer un test</button>
+        <button class="btn primary" :disabled="envoiEnCours || !apercu.disponible || (!apercu.nb_destinataires_email && !apercu.nb_destinataires_telegram)"
+                :title="!apercu.disponible ? 'Aucun jour évaluable : rien à envoyer' : (!apercu.nb_destinataires_email && !apercu.nb_destinataires_telegram) ? 'Aucun destinataire : cochez « Rapport matinal » sur un compte (Personnel)' : ''"
+                @click="envoyer('tous')">Envoyer maintenant à tous</button>
+      </div>
+      <p v-else class="hint">Consultation d'une date passée : envoi désactivé (aujourd'hui uniquement).</p>
 
-        <div v-if="envoi" :class="[envoi.envoye ? 'success-banner' : 'error-banner']">
-          <strong>{{ envoi.envoye ? 'Envoyé.' : 'Non envoyé.' }}</strong> {{ envoi.raison }}
-          <span v-if="envoi.envoye"> — {{ envoi.email_ok }} email(s), {{ envoi.telegram_ok }} Telegram.</span>
-          <ul v-if="envoi.email_echecs?.length || envoi.telegram_echecs?.length" class="echecs">
-            <li v-for="e in [...(envoi.email_echecs || []), ...(envoi.telegram_echecs || [])]" :key="e.destinataire">{{ e.destinataire }} : {{ e.erreur }}</li>
-          </ul>
-        </div>
+      <div v-if="envoi" :class="[envoi.envoye ? 'success-banner' : 'error-banner']">
+        <strong>{{ envoi.envoye ? 'Envoyé.' : 'Non envoyé.' }}</strong> {{ envoi.raison }}
+        <span v-if="envoi.envoye"> — {{ envoi.email_ok }} email(s), {{ envoi.telegram_ok }} Telegram.</span>
+        <ul v-if="envoi.email_echecs?.length || envoi.telegram_echecs?.length" class="echecs">
+          <li v-for="e in [...(envoi.email_echecs || []), ...(envoi.telegram_echecs || [])]" :key="e.destinataire">{{ e.destinataire }} : {{ e.erreur }}</li>
+        </ul>
+      </div>
 
+      <template v-if="apercu.disponible">
         <h3 class="sous-titre">{{ apercu.sujet }}</h3>
         <!-- sandbox="" : le HTML du rapport est affiché sans script ni accès à la page. -->
         <iframe class="apercu-html" sandbox="" :srcdoc="apercu.html" title="Aperçu du rapport matinal"></iframe>
@@ -96,7 +114,8 @@ async function envoyer(mode) {
 </template>
 
 <style scoped>
-.hint { color: var(--color-text-muted); font-size: var(--font-size-sm); margin: 0 0 var(--space-4); }
+.hint { color: var(--color-text-muted); font-size: var(--font-size-sm); margin: 0 0 var(--space-4); max-width: 900px}
+.date-choisie { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4); font-size: var(--font-size-sm); }
 .statut-ligne { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
 .pastille { width: 10px; height: 10px; border-radius: 50%; background: var(--color-border); flex-shrink: 0; }
 .pastille.on { background: var(--color-vert); } .pastille.off { background: var(--color-orange); }

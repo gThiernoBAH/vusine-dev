@@ -7,10 +7,10 @@ from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..core.models import User
 from ..models.production import SuiviIndividuelAcces
-from ..schemas.scoring import AccesSuiviOut, EquipeScoringOut, SuiviIndividuelOut, SuiviPersonneOut
+from ..schemas.scoring import AccesSuiviOut, EquipeScoringOut, SuiviIndividuelOut, SuiviPersonneOut, PersonnelClassementOut
 from ..services import scoring_service as svc
 from ..services.snapshot_service import snapshoter_performance_du_jour
-from .auth_routes import require_permission, require_admin
+from .auth_routes import require_permission, require_admin, get_current_user
 
 router = APIRouter(prefix="/scoring", tags=["scoring"])
 
@@ -18,6 +18,14 @@ router = APIRouter(prefix="/scoring", tags=["scoring"])
 # /scoring/personnel/{id} (classement NOMINATIF de chaque CDI/CDD, avec rang et score par
 # personne) sont SUPPRIMÉES. Les remplacent : le score d'équipe (par ligne, sans nom) et un
 # suivi individuel de formation, sous permission distincte et journalisé. Cf. scoring_service.py.
+#
+# *** RÉINTRODUIT 2026-09-25 (demande explicite du client, en connaissance de cause de ce qui
+# précède -- le renoncement a été expliqué et la reconstruction confirmée deux fois) ***  :
+# GET /scoring/classement-personnel, plus bas. Choix délibéré : sous la permission "view_scoring"
+# (même niveau que /scoring/equipes, un écran Direction "normal"), PAS la permission dédiée
+# "view_suivi_individuel" ni la journalisation d'accès de /scoring/suivi-individuel -- le client
+# veut un tableau public, pas un accès tracé au cas par cas. Si ce choix doit être revu, c'est
+# ici et dans classement_personnel() (scoring_service.py) qu'il faut regarder en premier.
 
 
 def _periode(date_debut: Optional[date], date_fin: Optional[date]) -> tuple[date, date]:
@@ -49,6 +57,33 @@ def get_scores_equipes(
     Un compte avec section_scope ne voit que sa section."""
     d0, d1 = _periode(date_debut, date_fin)
     return svc.scoring_equipes(db, d0, d1, ligne_id=ligne_id, section_scope=user.section_scope)
+
+
+@router.get("/classement-personnel", response_model=list[PersonnelClassementOut])
+def get_classement_personnel(
+    date_debut: Optional[date] = None, date_fin: Optional[date] = None,
+    db: Session = Depends(get_db), user: User = Depends(require_permission("view_scoring")),
+):
+    """*** AJOUT 2026-09-25 *** : classement nominatif CDI/CDD (cf. commentaire au-dessus de
+    ce fichier). Même formule que /scoring/mon-activite et /scoring/suivi-individuel (le
+    résultat de L'ÉQUIPE pendant la présence de la personne -- pas une métrique individuelle
+    nouvelle), simplement affichée nominativement et classée ici."""
+    d0, d1 = _periode(date_debut, date_fin)
+    return svc.classement_personnel(db, d0, d1, section_scope=user.section_scope)
+
+
+@router.get("/mon-activite", response_model=SuiviIndividuelOut)
+def get_mon_activite(
+    date_debut: Optional[date] = None, date_fin: Optional[date] = None,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    """« Voir mes performances » (tablette) : SES propres heures par ligne et le résultat de
+    l'ÉQUIPE pendant ces heures. Toujours et seulement le compte connecté -- aucun paramètre
+    user_id, donc impossible de consulter quelqu'un d'autre par cette route. Pas de score
+    personnel, pas de comparaison, pas de rang. Non journalisé : c'est la personne qui consulte
+    ses propres données."""
+    d0, d1 = _periode(date_debut, date_fin)
+    return svc.suivi_individuel(db, user, d0, d1, avertissement=svc.AVERTISSEMENT_MON_ACTIVITE)
 
 
 @router.get("/suivi-individuel", response_model=list[SuiviPersonneOut])

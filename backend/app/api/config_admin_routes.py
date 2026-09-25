@@ -3,6 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
@@ -15,6 +16,7 @@ from ..schemas.admin import (
     EquipementCreate, EquipementUpdate, EquipementAdminOut,
     AffectationEquipementCreate, AffectationPersonnelCreate, AffectationOut,
     CauseArretCreate, CauseArretUpdate, CauseArretAdminOut,
+    AffectationLignePersonneOut, AffectationLotCreate, AffectationLotOut,
 )
 from ..schemas.entities import CauseArretOut
 from .auth_routes import require_permission
@@ -196,6 +198,11 @@ def creer_affectation_personnel(payload: AffectationPersonnelCreate, db: Session
     personne peut être affectée à plusieurs lignes simultanément (ex: 1 opérateur qui
     couvre les 6 lignes d'une tablette) -- pas de clôture automatique d'une affectation
     existante ici."""
+    # 2026-09-24 : pas de doublon -- une même personne ne peut pas avoir deux affectations
+    # ACTIVES sur la même ligne (l'effectif de la ligne serait faussé).
+    if db.query(AffectationLigne).filter(AffectationLigne.user_id == payload.user_id, AffectationLigne.ligne_id == payload.ligne_id,
+                                         AffectationLigne.date_fin.is_(None)).first():
+        raise HTTPException(status_code=409, detail="Cette personne est déjà affectée à cette ligne.")
     debut = payload.date_debut or datetime.now()
     nouvelle = AffectationLigne(user_id=payload.user_id, ligne_id=payload.ligne_id, date_debut=debut)
     db.add(nouvelle)
@@ -215,6 +222,40 @@ def terminer_affectation_personnel(affectation_id: int, db: Session = Depends(ge
     db.commit()
     db.refresh(aff)
     return aff
+
+
+@router.get("/affectations-effectifs")
+def effectifs_par_ligne(db: Session = Depends(get_db), _user: User = Depends(require_permission("view_parametrage"))):
+    """{ligne_id: nombre de personnes actuellement affectées} -- pour repérer d'un coup d'œil les
+    lignes sans personne (écran d'affectation en masse)."""
+    rows = (db.query(AffectationLigne.ligne_id, func.count(func.distinct(AffectationLigne.user_id)))
+            .filter(AffectationLigne.date_fin.is_(None)).group_by(AffectationLigne.ligne_id).all())
+    return {str(lid): n for lid, n in rows}
+
+
+@router.get("/affectations-ligne/{ligne_id}", response_model=list[AffectationLignePersonneOut])
+def list_affectations_ligne(ligne_id: int, db: Session = Depends(get_db), _user: User = Depends(require_permission("view_parametrage"))):
+    """*** AJOUT 2026-09-24 *** : personnes actuellement affectées à UNE ligne (vue par ligne, à
+    l'inverse de /affectations-personnel qui est par personne)."""
+    rows = (db.query(AffectationLigne, User).join(User, AffectationLigne.user_id == User.id)
+            .filter(AffectationLigne.ligne_id == ligne_id, AffectationLigne.date_fin.is_(None)).order_by(User.nom).all())
+    return [AffectationLignePersonneOut(affectation_id=a.id, user_id=u.id, nom=u.nom, matricule=u.matricule,
+                                        user_type=u.user_type, date_debut=a.date_debut) for a, u in rows]
+
+
+@router.post("/affectations-ligne/{ligne_id}", response_model=AffectationLotOut, status_code=201)
+def affecter_en_masse(ligne_id: int, payload: AffectationLotCreate, db: Session = Depends(get_db), _user: User = Depends(require_permission("view_parametrage"))):
+    """Affecte plusieurs personnes à la ligne d'un coup (idempotent : celles déjà affectées sont
+    ignorées, pas dupliquées). Seuls les comptes Opérateur/Ouvrier actifs sont retenus."""
+    if not db.query(LigneCache).filter(LigneCache.id == ligne_id).first():
+        raise HTTPException(status_code=404, detail="Ligne introuvable.")
+    deja = {a.user_id for a in db.query(AffectationLigne).filter(AffectationLigne.ligne_id == ligne_id, AffectationLigne.date_fin.is_(None))}
+    valides = {u.id for u in db.query(User).filter(User.id.in_(set(payload.user_ids)), User.is_active.is_(True), User.user_type.in_(("operateur", "ouvrier")))}
+    ajoutes = 0
+    for uid in sorted(valides - deja):
+        db.add(AffectationLigne(user_id=uid, ligne_id=ligne_id, date_debut=datetime.now())); ajoutes += 1
+    db.commit()
+    return AffectationLotOut(ajoutes=ajoutes, deja_affectes=len(valides & deja), ignores=len(set(payload.user_ids)) - len(valides))
 
 
 @router.get("/affectations-personnel", response_model=list[AffectationOut])

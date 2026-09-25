@@ -53,6 +53,26 @@ class AffectationPersonnelCreate(BaseModel):
     date_debut: Optional[datetime] = None  # défaut : maintenant
 
 
+class AffectationLignePersonneOut(BaseModel):
+    """Une personne actuellement affectée à une ligne (écran d'affectation en masse)."""
+    affectation_id: int
+    user_id: int
+    nom: str
+    matricule: Optional[str] = None
+    user_type: str
+    date_debut: datetime
+
+
+class AffectationLotCreate(BaseModel):
+    user_ids: list[int]
+
+
+class AffectationLotOut(BaseModel):
+    ajoutes: int
+    deja_affectes: int
+    ignores: int           # inconnus, inactifs ou comptes non opérateur/ouvrier
+
+
 class AffectationOut(BaseModel):
     id: int
     ligne_id: int

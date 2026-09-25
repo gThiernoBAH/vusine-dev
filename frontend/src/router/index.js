@@ -27,6 +27,7 @@ import TabletteView from '../operateur/TabletteView.vue'
 import MesLignesView from '../operateur/components/MesLignesView.vue'
 import LigneOperateurView from '../operateur/components/LigneOperateurView.vue'
 // *** AJOUT 2026-09-23 *** : "Mon historique" côté tablette.
+import MesPerformancesView from '../operateur/components/MesPerformancesView.vue'
 import HistoriqueOperateurView from '../operateur/components/HistoriqueOperateurView.vue'
 
 // *** MODIFIÉ 2026-09-24 *** : une session n'existe que si l'utilisateur ET le jeton sont
@@ -108,6 +109,8 @@ const routes = [
       // *** AJOUT 2026-09-23 *** : accessible depuis le bouton "historique" de
       // MesLignesView.vue -- @back générique de TabletteView ramène à 'mes-lignes'.
       { path: 'historique', name: 'historique-operateur', component: HistoriqueOperateurView },
+      // *** AJOUT 2026-09-24 *** : « Voir mes performances » (heures + résultat de l'équipe).
+      { path: 'performances', name: 'performances-operateur', component: MesPerformancesView },
     ],
   },
   // Toute URL inconnue -> espace de l'utilisateur connecté, ou /login sinon.

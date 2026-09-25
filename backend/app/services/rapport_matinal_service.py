@@ -3,9 +3,9 @@ rapport_matinal_service.py -- rapport matinal automatique. *** NOUVEAU 2026-09-2
 
 Synthèse envoyée chaque matin (email et/ou Telegram) aux comptes qui l'ont demandé
 (users.is_alert_mail / is_alert_telegram) :
-  - performance de l'usine sur le DERNIER JOUR DE PRODUCTION connu (pas forcément hier :
-    après un week-end ou un jour férié, c'est le dernier jour où des performances ont été
-    figées, dans les 7 derniers jours), comparée au jour précédent ;
+  - performance de l'usine sur le DERNIER JOUR ÉVALUABLE (pas forcément hier : après un
+    week-end ou un jour férié, c'est le dernier jour terminé avec un planning, dans les 7
+    derniers jours), comparée au jour évaluable précédent ;
   - meilleures et moins bonnes lignes ;
   - TRS décomposé de ce jour ;
   - principales causes d'arrêt et leur coût estimé ;
@@ -30,7 +30,8 @@ from sqlalchemy.orm import Session
 
 from ..core import crud
 from ..core.models import User
-from ..models.production import Arret, LigneCache, PerformanceLigneJour
+from ..models.production import Arret, LigneCache
+from .reports_service import perf_ligne_jour
 from . import notification_service
 from .ligne_helpers import get_planning_du_jour
 from .pertes_service import pareto_arrets
@@ -49,53 +50,43 @@ CLE_DERNIER_ENVOI = "rapport_matinal_dernier_envoi"
 # Construction
 # ----------------------------------------------------------------------------------
 
-def _pct_usine(lignes: list[PerformanceLigneJour]) -> tuple[int, int, Optional[int]]:
-    """Même règle que la Vue Usine : seules les lignes avec un théorique comptent."""
-    valides = [p for p in lignes if p.theorique and p.theorique > 0]
-    reel = sum(p.reel for p in valides)
-    theo = sum(p.theorique for p in valides)
-    return reel, theo, round(reel / theo * 100) if theo > 0 else None
-
-
-def _dernier_jour_avec_donnees(db: Session, avant: date) -> Optional[date]:
-    limite = avant - timedelta(days=RECHERCHE_JOURS)
-    return (
-        db.query(PerformanceLigneJour.jour)
-        .filter(PerformanceLigneJour.jour < avant, PerformanceLigneJour.jour >= limite)
-        .order_by(PerformanceLigneJour.jour.desc()).limit(1).scalar()
-    )
-
-
-def _snapshots_du_jour(db: Session, jour: date) -> list[PerformanceLigneJour]:
-    return (
-        db.query(PerformanceLigneJour).join(LigneCache, PerformanceLigneJour.ligne_id == LigneCache.id)
-        .filter(PerformanceLigneJour.jour == jour, LigneCache.actif.is_(True)).all()
-    )
-
-
 def construire_rapport(db: Session, aujourd_hui: Optional[date] = None, maintenant: Optional[datetime] = None) -> Optional[dict]:
-    """None s'il n'existe aucune donnée de performance dans les 7 derniers jours."""
+    """None s'il n'existe aucun jour évaluable dans les 7 derniers jours.
+
+    *** REVU 2026-09-24 *** : ne dépend plus du job de snapshot du soir. Un jour est évaluable
+    s'il est TERMINÉ et que des lignes y avaient un planning ; les chiffres viennent du
+    snapshot quand il existe, sinon du calcul direct (reports_service.perf_ligne_jour) --
+    exactement comme les écrans Rapports."""
     maintenant = maintenant or datetime.now()
     aujourd_hui = aujourd_hui or maintenant.date()
-    jour = _dernier_jour_avec_donnees(db, aujourd_hui)
-    if jour is None:
+    lignes = db.query(LigneCache).filter(LigneCache.actif.is_(True)).order_by(LigneCache.code).all()
+    perf = perf_ligne_jour(db, lignes, aujourd_hui - timedelta(days=RECHERCHE_JOURS), aujourd_hui - timedelta(days=1), maintenant)
+    par_jour: dict[date, dict[int, tuple[float, float]]] = {}
+    for (lid, j), (reel, theo) in perf.items():
+        if theo > 0:
+            par_jour.setdefault(j, {})[lid] = (reel, theo)
+    if not par_jour:
         return None
-    snaps = _snapshots_du_jour(db, jour)
-    if not snaps:
-        return None
-    lignes = {l.id: l for l in db.query(LigneCache).filter(LigneCache.id.in_([s.ligne_id for s in snaps])).all()}
-    reel, theo, pct = _pct_usine(snaps)
+    jours = sorted(par_jour, reverse=True)
+    jour = jours[0]
+    jour_prec = jours[1] if len(jours) > 1 else None
 
-    jour_prec = _dernier_jour_avec_donnees(db, jour)
-    pct_prec = _pct_usine(_snapshots_du_jour(db, jour_prec))[2] if jour_prec else None
+    def pct_usine(j: date) -> tuple[int, int, Optional[int]]:
+        reel = sum(r for r, _t in par_jour[j].values()); theo = sum(t for _r, t in par_jour[j].values())
+        return round(reel), round(theo), round(reel / theo * 100) if theo > 0 else None
 
+    reel, theo, pct = pct_usine(jour)
+    pct_prec = pct_usine(jour_prec)[2] if jour_prec else None
+    par_id = {l.id: l for l in lignes}
     classees = sorted(
-        [{"code": lignes[s.ligne_id].code, "nom": lignes[s.ligne_id].nom, "pct": s.performance_pct,
-          "reel": s.reel, "theorique": s.theorique} for s in snaps if s.performance_pct is not None],
+        [{"code": par_id[lid].code, "nom": par_id[lid].nom, "pct": round(r / t * 100), "reel": round(r), "theorique": round(t)}
+         for lid, (r, t) in par_jour[jour].items()],
         key=lambda x: (-x["pct"], x["code"]),
     )
     meilleures = classees[:3]
     moins_bonnes = [c for c in reversed(classees) if c not in meilleures][:3]
+    perf_out = {"reel": reel, "theorique": theo, "pct": pct, "pct_precedent": pct_prec,
+                "jour_precedent": jour_prec, "nb_lignes": len(par_jour[jour])}
 
     trs = None
     t = calculer_trs(db, jour, jour, maintenant=maintenant)
@@ -127,8 +118,7 @@ def construire_rapport(db: Session, aujourd_hui: Optional[date] = None, maintena
 
     return {
         "aujourd_hui": aujourd_hui, "jour_rapport": jour, "genere_le": maintenant.isoformat(timespec="minutes"),
-        "performance": {"reel": reel, "theorique": theo, "pct": pct, "pct_precedent": pct_prec,
-                        "jour_precedent": jour_prec, "nb_lignes": len(snaps)},
+        "performance": perf_out,
         "meilleures": meilleures, "moins_bonnes": moins_bonnes, "trs": trs, "arrets": arrets,
         "arrets_ouverts": ouverts, "aujourdhui": {"nb_lignes": nb_planifiees, "qte_planifiee": round(qte)},
     }

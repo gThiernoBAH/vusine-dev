@@ -169,7 +169,7 @@ const lignesFiltrees = computed(() => {
 </template>
 
 <style scoped>
-.hint { font-size: var(--font-size-sm); color: var(--color-text-muted); max-width: 640px; margin-bottom: var(--space-4); }
+.hint { font-size: var(--font-size-sm); color: var(--color-text-muted); max-width: 900px; margin-bottom: var(--space-4); }
 
 .error-banner {
   background: var(--color-rouge-bg); color: var(--color-rouge);

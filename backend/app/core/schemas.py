@@ -84,7 +84,7 @@ class UserUpdate(BaseModel):
         # Identifiant de chat Telegram : entier (négatif pour un groupe) -- refuse une faute
         # de frappe ici plutôt que des envois qui échouent en silence chaque matin.
         if v is not None and not re.fullmatch(r"-?\d{5,20}", v.strip()):
-            raise ValueError("telegram_chat_id doit être un identifiant numérique (ex. 123456789).")
+            raise ValueError("L'identifiant Telegram doit être un nombre, par exemple 123456789 (pas un jeton ni un nom d'utilisateur).")
         return v.strip() if v else v
 
     class Config:

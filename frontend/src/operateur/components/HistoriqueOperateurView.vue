@@ -6,7 +6,7 @@
  * operateur_id à passer ici -- le backend l'impose, ce composant ne le demande même
  * pas). Même tableau (DataTable) que côté Direction, en plus compact pour la tablette.
  */
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import apiClient from '@/api/client'
 import DataTable from '@/components/DataTable.vue'
 import { ArrowLeft } from 'lucide-vue-next'
@@ -24,6 +24,8 @@ const dateFin = ref(ilYA(0))
 const scans = ref([])
 const isLoading = ref(true)
 const errorMessage = ref('')
+const sectionChoisie = ref('')   // *** AJOUT 2026-09-25 *** : filtre client (toutes les sections chargées, filtre local)
+const ligneChoisie = ref('')
 
 const COLONNES = [
   { key: 'created_at', label: 'Date / heure',
@@ -32,7 +34,7 @@ const COLONNES = [
   { key: 'produit_nom', label: 'Produit', format: v => v ?? '—' },
   { key: 'numero_lot', label: 'N° lot' },
   { key: 'quantite_totale', label: 'Quantité', align: 'right' },
-  { key: 'complete', label: 'Statut', format: (v, row) => v ? 'Complète' : `Partielle${row.motif_partielle ? ' — ' + row.motif_partielle : ''}` },
+  { key: 'complete', label: 'Statut', carteBadge: true, format: (v, row) => v ? 'Complète' : `Partielle${row.motif_partielle ? ' — ' + row.motif_partielle : ''}` },
 ]
 
 async function charger() {
@@ -50,6 +52,17 @@ async function charger() {
 }
 
 onMounted(charger)
+
+// *** AJOUT 2026-09-25 *** : filtre par section puis par ligne (dépendant de la section choisie),
+// calculé côté client à partir de ce qui est déjà chargé -- pas d'appel serveur supplémentaire.
+const sectionsDisponibles = computed(() => [...new Set(scans.value.map(s => s.section_nom).filter(Boolean))].sort())
+const lignesDisponibles = computed(() => {
+  const base = sectionChoisie.value ? scans.value.filter(s => s.section_nom === sectionChoisie.value) : scans.value
+  return [...new Set(base.map(s => s.ligne_code))].sort()
+})
+watch(sectionChoisie, () => { ligneChoisie.value = '' })
+const scansFiltres = computed(() => scans.value.filter(s =>
+  (!sectionChoisie.value || s.section_nom === sectionChoisie.value) && (!ligneChoisie.value || s.ligne_code === ligneChoisie.value)))
 </script>
 
 <template>
@@ -62,13 +75,25 @@ onMounted(charger)
     <div class="dates">
       <label>Du <input v-model="dateDebut" type="date" @change="charger" /></label>
       <label>Au <input v-model="dateFin" type="date" @change="charger" /></label>
+      <label>Section
+        <select v-model="sectionChoisie">
+          <option value="">Toutes</option>
+          <option v-for="s in sectionsDisponibles" :key="s" :value="s">{{ s }}</option>
+        </select>
+      </label>
+      <label>Ligne
+        <select v-model="ligneChoisie">
+          <option value="">Toutes</option>
+          <option v-for="l in lignesDisponibles" :key="l" :value="l">{{ l }}</option>
+        </select>
+      </label>
     </div>
 
     <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
 
     <DataTable
-      :columns="COLONNES" :rows="scans" :loading="isLoading"
-      :default-sort="{ key: 'created_at', dir: -1 }" :page-sizes="[10, 25, 50]"
+      :columns="COLONNES" :rows="scansFiltres" :loading="isLoading"
+      :default-sort="{ key: 'created_at', dir: -1 }" :page-sizes="[10, 25, 50]" :cartes-sous-px="640"
       empty-text="Aucun scan sur cette période."
     >
       <template #cell-complete="{ row }">

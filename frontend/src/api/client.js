@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { oublierSessionKiosque } from './session'
+import { formaterDetail } from './errors'
 
 const apiClient = axios.create({
   baseURL: '/api',
@@ -34,6 +35,10 @@ apiClient.interceptors.response.use(
       if (window.location.pathname !== '/login') {
         window.location.assign('/login')
       }
+    }
+    // Erreur de validation (tableau) -> phrase lisible, pour TOUS les écrans (cf. errors.js).
+    if (Array.isArray(error.response?.data?.detail)) {
+      error.response.data.detail = formaterDetail(error.response.data.detail)
     }
     return Promise.reject(error)
   },

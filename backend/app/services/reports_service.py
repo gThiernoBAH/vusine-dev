@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -8,21 +9,19 @@ from ..models.production import (
     PlanningDetailCache, ProduitCache,
 )
 from .pertes_service import arrets_de_periode, minutes_entre
+from .trs_service import donnees_ligne_jour
 from ..schemas.reports import (
     RapportLigneOut, RapportDirectionOut, TopFlopLigneOut, PerteCauseOut, EvolutionJourOut,
     RapportProduitOut, RapportSectionOut, HistoriqueScanOut,
 )
 
-# NB IMPORTANT (2026-09-17, ce fichier n'existait pas -- écrit à partir de ce
-# qu'attendent reports_routes.py et RapportsView.vue) : les chiffres reel/theorique
-# viennent de performance_ligne_jour, le snapshot figé chaque soir (23:50, cf.
-# snapshot_service.py) -- PAS d'un calcul en direct pour le jour en cours, contrairement
-# au cockpit Vue Usine. Concrètement : tant qu'aucun snapshot n'a encore été déclenché
-# (POST /scoring/snapshot/run-now, ou le job planifié une fois activé), le jour
-# d'aujourd'hui n'apparaît dans aucun rapport. À garder en tête pour le plan de test #4 :
-# lancer un snapshot manuel avant de tester l'écran Rapports, sinon la période "7 derniers
-# jours" par défaut peut remonter vide si aucun snapshot n'a jamais tourné.
-
+# *** REVU 2026-09-24 *** : ces rapports dépendaient UNIQUEMENT du snapshot figé chaque soir
+# (performance_ligne_jour) -- tant que le job n'avait pas tourné, tout s'affichait à 0 sans
+# aucune explication (constaté chez l'utilisateur : « Réel 0 / Théorique 0 » avec 1 palette
+# pourtant visible dans la colonne Palettes). Désormais : le snapshot fait foi quand il existe
+# (l'historique figé n'est jamais recalculé) ; à défaut, le jour COMPLET est calculé
+# directement depuis planning, palettes et arrêts (trs_service.donnees_ligne_jour). Le jour
+# en cours n'est compté ni par l'un ni par l'autre.
 
 def _bornes_jour(d: date) -> tuple[datetime, datetime]:
     """Bornes [00:00, 00:00 du lendemain[ pour un jour donné -- utilisé pour filtrer
@@ -31,70 +30,85 @@ def _bornes_jour(d: date) -> tuple[datetime, datetime]:
     return debut, debut + timedelta(days=1)
 
 
-def _agregat_ligne(db: Session, ligne: LigneCache, date_debut: date, date_fin: date) -> RapportLigneOut:
-    snapshots = (
-        db.query(PerformanceLigneJour)
-        .filter(
-            PerformanceLigneJour.ligne_id == ligne.id,
-            PerformanceLigneJour.jour >= date_debut,
-            PerformanceLigneJour.jour <= date_fin,
-        )
-        .all()
-    )
-    reel_total = sum(s.reel for s in snapshots)
-    theorique_total = sum(s.theorique or 0 for s in snapshots)
-    performance_moyenne = round(reel_total / theorique_total * 100) if theorique_total > 0 else None
+def _lignes_du_perimetre(db: Session, ligne_id: Optional[int], section_scope: Optional[str]) -> list[LigneCache]:
+    q = db.query(LigneCache).filter(LigneCache.actif.is_(True))
+    if section_scope:
+        q = q.filter(LigneCache.section_nom == section_scope)
+    if ligne_id:
+        q = q.filter(LigneCache.id == ligne_id)
+    return q.order_by(LigneCache.code).all()
 
+
+def perf_ligne_jour(db: Session, lignes: list[LigneCache], date_debut: date, date_fin: date,
+                    maintenant: Optional[datetime] = None) -> dict[tuple[int, date], tuple[float, float]]:
+    """{(ligne_id, jour): (reel, theorique)} -- snapshot si présent, sinon calcul direct."""
+    maintenant = maintenant or datetime.now()
+    ids = [l.id for l in lignes]
+    resultat: dict[tuple[int, date], tuple[float, float]] = {}
+    if not ids:
+        return resultat
+    for snap in db.query(PerformanceLigneJour).filter(
+        PerformanceLigneJour.ligne_id.in_(ids), PerformanceLigneJour.jour >= date_debut, PerformanceLigneJour.jour <= date_fin,
+    ):
+        resultat[(snap.ligne_id, snap.jour)] = (float(snap.reel), float(snap.theorique or 0))
+    live = donnees_ligne_jour(db, lignes, date_debut, date_fin, maintenant)
+    for cle, c in live.cellules.items():
+        resultat.setdefault(cle, (c["conforme"], c["q_run"]))
+    return resultat
+
+
+def rapport_par_ligne(
+    db: Session, date_debut: date, date_fin: date,
+    ligne_id: Optional[int] = None, section_scope: Optional[str] = None, maintenant: Optional[datetime] = None,
+) -> list[RapportLigneOut]:
+    """Écran Rapports, onglet 'Par ligne' (slide 14) -- une ligne du tableau par ligne
+    active du périmètre, agrégée sur [date_debut, date_fin] inclus."""
+    lignes = _lignes_du_perimetre(db, ligne_id, section_scope)
+    perf = perf_ligne_jour(db, lignes, date_debut, date_fin, maintenant)
     borne_debut, _ = _bornes_jour(date_debut)
     _, borne_fin = _bornes_jour(date_fin)
-
-    nb_palettes = (
-        db.query(Palette)
-        .filter(Palette.ligne_id == ligne.id, Palette.created_at >= borne_debut, Palette.created_at < borne_fin)
-        .count()
-    )
-
-    # *** CORRIGÉ 2026-09-24 *** : avant, seuls les arrêts DÉMARRÉS dans la période étaient
-    # comptés, en entier (un arrêt ouvert comptait jusqu'à `now` même pour une période
-    # passée). Maintenant : tout arrêt qui chevauche la période, plafonné à ses bornes --
-    # cf. pertes_service.arrets_de_periode.
-    temps_arret_min = round(sum(
-        minutes_entre(debut, fin) for _a, debut, fin in arrets_de_periode(db, borne_debut, borne_fin, [ligne.id])
-    ))
-
-    return RapportLigneOut(
-        ligne_id=ligne.id, code=ligne.code, nom=ligne.nom,
-        reel_total=reel_total, theorique_total=theorique_total,
-        performance_moyenne=performance_moyenne, nb_palettes=nb_palettes,
-        temps_arret_min=temps_arret_min,
-    )
+    sorties = []
+    for ligne in lignes:
+        jours = [v for (lid, _j), v in perf.items() if lid == ligne.id]
+        reel_total = round(sum(r for r, _t in jours))
+        theorique_total = round(sum(t for _r, t in jours))
+        nb_palettes = (
+            db.query(Palette)
+            .filter(Palette.ligne_id == ligne.id, Palette.created_at >= borne_debut, Palette.created_at < borne_fin).count()
+        )
+        # *** CORRIGÉ 2026-09-24 *** : tout arrêt qui chevauche la période, plafonné à ses bornes.
+        temps_arret_min = round(sum(
+            minutes_entre(debut, fin) for _a, debut, fin in arrets_de_periode(db, borne_debut, borne_fin, [ligne.id])
+        ))
+        sorties.append(RapportLigneOut(
+            ligne_id=ligne.id, code=ligne.code, nom=ligne.nom, reel_total=reel_total, theorique_total=theorique_total,
+            performance_moyenne=round(reel_total / theorique_total * 100) if theorique_total > 0 else None,
+            nb_palettes=nb_palettes, temps_arret_min=temps_arret_min,
+        ))
+    return sorties
 
 
-def rapport_par_ligne(db: Session, date_debut: date, date_fin: date) -> list[RapportLigneOut]:
-    """Écran Rapports, onglet 'Par ligne' (slide 14) -- une ligne du tableau par ligne
-    active, agrégée sur [date_debut, date_fin] inclus."""
-    lignes = db.query(LigneCache).filter(LigneCache.actif.is_(True)).order_by(LigneCache.code).all()
-    return [_agregat_ligne(db, ligne, date_debut, date_fin) for ligne in lignes]
-
-
-def rapport_par_produit(db: Session, date_debut: date, date_fin: date) -> list[RapportProduitOut]:
+def rapport_par_produit(
+    db: Session, date_debut: date, date_fin: date,
+    ligne_id: Optional[int] = None, section_scope: Optional[str] = None,
+) -> list[RapportProduitOut]:
     """*** NOUVEAU 2026-09-18 *** : écran Rapports, onglet 'Par produit' (slide 14).
 
     Agrégé depuis les palettes validées sur la période, rattachées à un produit via
-    planning_detail_cache -- l'ancien "OF" (of_cache) n'est plus la source de vérité
-    depuis la découverte du 2026-09-17 (of_id sur palettes est déprécié, NULL sur toute
-    palette créée après cette date). Une palette sans planning_detail_id (saisie
-    manuelle un jour sans planning pour cette ligne) n'est rattachable à aucun produit
-    -- exclue de ce rapport plutôt que comptée sous un faux produit "inconnu", mais
-    potentiellement significative si nombreuse : à surveiller au fil des tests."""
+    planning_detail_cache. Une palette sans planning_detail_id est exclue de ce rapport
+    plutôt que comptée sous un faux produit « inconnu ». Filtrable par ligne / section
+    (2026-09-24)."""
     borne_debut, _ = _bornes_jour(date_debut)
     _, borne_fin = _bornes_jour(date_fin)
+    ids = [l.id for l in _lignes_du_perimetre(db, ligne_id, section_scope)]
+    if not ids:
+        return []
 
     rows = (
         db.query(PlanningDetailCache.produit_id, ProduitCache.nom, Palette)
         .join(PlanningDetailCache, Palette.planning_detail_id == PlanningDetailCache.id)
         .join(ProduitCache, PlanningDetailCache.produit_id == ProduitCache.id)
-        .filter(Palette.created_at >= borne_debut, Palette.created_at < borne_fin)
+        .filter(Palette.created_at >= borne_debut, Palette.created_at < borne_fin, Palette.ligne_id.in_(ids))
         .all()
     )
 
@@ -117,15 +131,9 @@ def rapport_par_produit(db: Session, date_debut: date, date_fin: date) -> list[R
 
 
 def _rapport_par_section(db: Session, rows_par_ligne: list[RapportLigneOut]) -> list[RapportSectionOut]:
-    """*** NOUVEAU 2026-09-18 *** : 'Performance par atelier' de la Vue Direction (slide
-    14) -- regroupe le rapport 'par ligne' déjà calculé par section_nom. Fiable
-    seulement depuis que section_nom est synchronisé depuis Odoo (2026-09-18, cf.
-    investigate_sections.py) -- avant cette date, en partie manuel/vide, ce
-    regroupement aurait été trompeur.
-
-    Agrégation en somme(reel)/somme(theorique), pas une moyenne des % par ligne : une
-    moyenne simple pondérerait à tort une petite ligne comme une grosse, cf. le même
-    principe déjà appliqué à performance_usine_pct (dashboard_routes.get_vue_usine)."""
+    """'Performance par atelier' de la Vue Direction (slide 14) -- regroupe le rapport
+    'par ligne' déjà calculé par section_nom. Agrégation en somme(reel)/somme(theorique),
+    pas une moyenne des % par ligne (une petite ligne ne pèse pas comme une grosse)."""
     lignes_par_id = {l.id: l for l in db.query(LigneCache).all()}
     agregats: dict[str, dict] = {}
     for r in rows_par_ligne:
@@ -147,27 +155,27 @@ def _rapport_par_section(db: Session, rows_par_ligne: list[RapportLigneOut]) -> 
     return resultats
 
 
-def rapport_vue_direction(db: Session, date_debut: date, date_fin: date) -> RapportDirectionOut:
+def rapport_vue_direction(
+    db: Session, date_debut: date, date_fin: date,
+    ligne_id: Optional[int] = None, section_scope: Optional[str] = None, maintenant: Optional[datetime] = None,
+) -> RapportDirectionOut:
     """Écran Rapports, onglet 'Vue Direction' (slide 14) : top/flop 5 lignes, pertes
     par cause, évolution quotidienne de la performance usine."""
-    rows = rapport_par_ligne(db, date_debut, date_fin)
+    maintenant = maintenant or datetime.now()
+    lignes = _lignes_du_perimetre(db, ligne_id, section_scope)
+    ids = [l.id for l in lignes]
+    rows = rapport_par_ligne(db, date_debut, date_fin, ligne_id, section_scope, maintenant)
 
-    # --- Top / flop 5 : seules les lignes avec une performance calculable entrent
-    # dans le classement (une ligne sans aucun snapshot sur la période n'a rien à
-    # montrer, ni en haut ni en bas de classement). ---
     classables = [r for r in rows if r.performance_moyenne is not None]
     classables_tries = sorted(classables, key=lambda r: r.performance_moyenne, reverse=True)
     top = [TopFlopLigneOut(ligne_id=r.ligne_id, code=r.code, performance_moyenne=r.performance_moyenne) for r in classables_tries[:5]]
     flop = [TopFlopLigneOut(ligne_id=r.ligne_id, code=r.code, performance_moyenne=r.performance_moyenne) for r in classables_tries[-5:][::-1]]
 
-    # --- Pertes par cause (toutes lignes confondues, sur la période) ---
     borne_debut, _ = _bornes_jour(date_debut)
     _, borne_fin = _bornes_jour(date_fin)
-    # *** CORRIGÉ 2026-09-24 *** : mêmes durées plafonnées à la période que le Pareto
-    # (pertes_service) -- les deux écrans ne peuvent plus se contredire.
     causes_par_id = {c.id: c.libelle for c in db.query(CauseArret).all()}
     duree_par_cause: dict[str, float] = {}
-    for a, debut, fin in arrets_de_periode(db, borne_debut, borne_fin):
+    for a, debut, fin in (arrets_de_periode(db, borne_debut, borne_fin, ids) if ids else []):
         libelle = causes_par_id.get(a.cause_id, "Inconnue")
         duree_par_cause[libelle] = duree_par_cause.get(libelle, 0) + minutes_entre(debut, fin)
     pertes_par_cause = sorted(
@@ -175,28 +183,18 @@ def rapport_vue_direction(db: Session, date_debut: date, date_fin: date) -> Rapp
         key=lambda p: p.duree_min, reverse=True,
     )
 
-    # --- Évolution quotidienne : performance usine agrégée (toutes lignes actives)
-    # jour par jour sur la période, depuis les snapshots. ---
+    perf = perf_ligne_jour(db, lignes, date_debut, date_fin, maintenant)
     evolution_quotidienne = []
     jour_courant = date_debut
     while jour_courant <= date_fin:
-        snapshots_jour = (
-            db.query(PerformanceLigneJour)
-            .join(LigneCache, PerformanceLigneJour.ligne_id == LigneCache.id)
-            .filter(PerformanceLigneJour.jour == jour_courant, LigneCache.actif.is_(True))
-            .all()
-        )
-        reel_jour = sum(s.reel for s in snapshots_jour)
-        theorique_jour = sum(s.theorique or 0 for s in snapshots_jour)
-        pct = round(reel_jour / theorique_jour * 100) if theorique_jour > 0 else None
-        evolution_quotidienne.append(EvolutionJourOut(jour=jour_courant, performance_pct=pct))
+        jour_vals = [v for (_lid, j), v in perf.items() if j == jour_courant]
+        reel_jour, theo_jour = sum(r for r, _t in jour_vals), sum(t for _r, t in jour_vals)
+        evolution_quotidienne.append(EvolutionJourOut(jour=jour_courant, performance_pct=round(reel_jour / theo_jour * 100) if theo_jour > 0 else None))
         jour_courant += timedelta(days=1)
-
-    par_atelier = _rapport_par_section(db, rows)
 
     return RapportDirectionOut(
         top=top, flop=flop, pertes_par_cause=pertes_par_cause,
-        evolution_quotidienne=evolution_quotidienne, par_atelier=par_atelier,
+        evolution_quotidienne=evolution_quotidienne, par_atelier=_rapport_par_section(db, rows),
     )
 
 # =============================================================
@@ -219,7 +217,7 @@ def historique_scans(
     _, borne_fin = _bornes_jour(date_fin)
 
     q = (
-        db.query(Palette, LigneCache.code, User.nom, User.matricule, ProduitCache.nom)
+        db.query(Palette, LigneCache.code, LigneCache.section_nom, User.nom, User.matricule, ProduitCache.nom)
         .join(LigneCache, Palette.ligne_id == LigneCache.id)
         .join(User, Palette.operateur_id == User.id)
         .outerjoin(PlanningDetailCache, Palette.planning_detail_id == PlanningDetailCache.id)
@@ -235,11 +233,11 @@ def historique_scans(
     return [
         HistoriqueScanOut(
             id=palette.id, created_at=palette.created_at, ligne_id=palette.ligne_id,
-            ligne_code=ligne_code, produit_nom=produit_nom, numero_lot=palette.numero_lot,
+            ligne_code=ligne_code, section_nom=section_nom, produit_nom=produit_nom, numero_lot=palette.numero_lot,
             nb_cartons=palette.nb_cartons, colisage_carton=palette.colisage_carton,
             quantite_totale=palette.quantite_totale, complete=palette.complete,
             motif_partielle=palette.motif_partielle, nb_rebuts=palette.nb_rebuts or 0, operateur_id=palette.operateur_id,
             operateur_nom=operateur_nom, operateur_matricule=operateur_matricule,
         )
-        for palette, ligne_code, operateur_nom, operateur_matricule, produit_nom in q.all()
+        for palette, ligne_code, section_nom, operateur_nom, operateur_matricule, produit_nom in q.all()
     ]

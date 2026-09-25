@@ -632,7 +632,7 @@ async function terminerAffectation(a) {
 </template>
 
 <style scoped>
-.hint { font-size: var(--font-size-sm); color: var(--color-text-muted); max-width: 640px; margin-bottom: var(--space-4); }
+.hint { font-size: var(--font-size-sm); color: var(--color-text-muted); max-width: 900px; margin-bottom: var(--space-4); }
 .error-banner {
   background: var(--color-rouge-bg); color: var(--color-rouge);
   padding: var(--space-3); border-radius: var(--radius-md); margin-bottom: var(--space-3);
