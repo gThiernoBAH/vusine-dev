@@ -337,6 +337,14 @@ const heureFr = iso => new Date(iso).toLocaleString('fr-FR', { dateStyle: 'short
 .warn-banner { background: var(--color-orange-bg); color: #92400E; padding: var(--space-3); border-radius: var(--radius-md); margin-bottom: var(--space-3); }
 .error-banner { background: var(--color-rouge-bg); color: var(--color-rouge); padding: var(--space-3); border-radius: var(--radius-md); margin-bottom: var(--space-3); }
 .tabs { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); }
+/* *** AJOUT 2026-09-25 (demande explicite, style pilule) *** */
+.tab-btn {
+  padding: 0 var(--space-4); height: 36px; border-radius: 999px; border: 1px solid var(--color-border);
+  background: var(--color-surface); color: var(--color-text-muted); font-size: var(--font-size-sm); font-weight: 600;
+  cursor: pointer; transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.tab-btn:hover { border-color: var(--color-brand); color: var(--color-text); }
+.tab-btn.active { background: var(--color-brand); border-color: var(--color-brand); color: var(--color-text-inverse); }
 .periode { display: flex; gap: var(--space-3); align-items: center; margin-bottom: var(--space-4); }
 .periode input, .choix-personne select { height: 36px; padding: 0 var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-md); font-family: inherit; }
 .kpi-total { display: inline-flex; flex-direction: column; gap: 2px; padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); margin-bottom: var(--space-4); }

@@ -106,7 +106,13 @@ def main():
             noter("Par ligne", f"{code} présente", False); continue
         att = dict(reel=sum(c["conforme"] for c in cs), theo=sum(c["q_run"] for c in cs), pal=sum(c["nb_palettes"] for c in cs), arret=sum(c["arret_min"] for c in cs))
         noter("Par ligne", f"{code} réel", r["reel_total"] == att["reel"], f"{r['reel_total']} vs {att['reel']}")
-        noter("Par ligne", f"{code} théorique", proche(r["theorique_total"], att["theo"], 1.01), f"{r['theorique_total']} vs {att['theo']:.1f}")
+        # *** AJOUT 2026-09-25 *** : tolérance élargie (1.01 -> 10) pour "théorique" seulement.
+        # performance_ligne_jour.theorique est une colonne ENTIÈRE (arrondie CHAQUE JOUR à la
+        # pièce près -- correct : on ne produit pas 0,3 pièce). Sommer plusieurs jours déjà
+        # arrondis dérive donc légèrement (≤ 0,5/jour) de la référence, qui somme des valeurs
+        # non arrondies puis arrondit une seule fois à la fin. 10 couvre large (jusqu'à 20 jours
+        # de dérive) sans masquer un vrai bug, dont l'écart se compte en centaines/milliers.
+        noter("Par ligne", f"{code} théorique", proche(r["theorique_total"], att["theo"], 10), f"{r['theorique_total']} vs {att['theo']:.1f}")
         noter("Par ligne", f"{code} palettes", r["nb_palettes"] == att["pal"], f"{r['nb_palettes']} vs {att['pal']}")
         noter("Par ligne", f"{code} minutes d'arrêt", proche(r["temps_arret_min"], att["arret"], 1.01), f"{r['temps_arret_min']} vs {att['arret']:.1f}")
         if att["theo"] > 0:

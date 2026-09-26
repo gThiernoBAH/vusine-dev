@@ -52,6 +52,7 @@ const LABELS_TYPE = {
   ralentissement_progressif: 'Ralentissement',
   partielle_non_justifiee: 'Traçabilité',
   of_termine_scan: 'Traçabilité',
+  arret_prolonge: 'Arrêt prolongé',   // *** AJOUT 2026-09-25 ***
 }
 const libelleType = t => LABELS_TYPE[t] || t
 const norm = t => String(t ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()

@@ -2,13 +2,20 @@ from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 
 from ..core import crud
-from ..models.production import LigneCache, Palette, Alerte, PlanningDetailCache, PlanningCache
+from ..models.production import LigneCache, Palette, Alerte, Arret, PlanningDetailCache, PlanningCache
 from .ligne_helpers import get_planning_du_jour
 from .performance_service import calculer_performance_ligne, _bornes_poste_du_jour, _duree_pause_ecoulee_s
 
 SEUIL_SILENCE_DEFAUT_MIN = 30
 FENETRE_RALENTISSEMENT_MIN = 60
 SEUIL_RALENTISSEMENT_PCT = 70  # en-dessous de 70% du rythme attendu sur la fenêtre récente
+# *** AJOUT 2026-09-25 *** : au-delà de cette durée, un arrêt encore ouvert est plus probablement
+# une saisie de reprise oubliée sur la tablette qu'un vrai arrêt en cours (cf. Rapports -> Pareto,
+# qui comptait ces arrêts jusqu'à la fin de la période demandée sans jamais prévenir personne avant
+# qu'un manager ne le remarque dans un rapport, plusieurs jours après). Volontairement plus large
+# que le silence de scan (30 min) : un arrêt réel de 1h-2h n'est pas anormal, pas la peine d'alerter
+# pour ça.
+SEUIL_ARRET_PROLONGE_DEFAUT_MIN = 180
 
 
 def _upsert_alerte_ligne(db: Session, type_: str, ligne_id: int, niveau: str, message: str) -> bool:
@@ -199,6 +206,25 @@ def executer_cycle_alertes(db: Session) -> int:
         if not _alerte_deja_ouverte(db, "of_termine_scan", p.ligne_id, message):
             db.add(Alerte(type="of_termine_scan", niveau="orange", ligne_id=p.ligne_id, message=message))
             nb_creees += 1
+
+    # --- Catégorie 6 : arrêt ouvert depuis trop longtemps (saisie de reprise probablement oubliée) ---
+    # *** AJOUT 2026-09-25 *** : cf. constante SEUIL_ARRET_PROLONGE_DEFAUT_MIN ci-dessus.
+    seuil_prolonge_str = crud.get_param(db, "seuil_arret_prolonge_minutes")
+    seuil_prolonge_min = int(seuil_prolonge_str) if seuil_prolonge_str else SEUIL_ARRET_PROLONGE_DEFAUT_MIN
+    arrets_ouverts = db.query(Arret).filter(Arret.heure_fin.is_(None)).all()
+    ids_ouverts = set()
+    for a in arrets_ouverts:
+        ids_ouverts.add(a.ligne_id)
+        minutes_ouvert = (maintenant - a.heure_debut).total_seconds() / 60
+        if minutes_ouvert > seuil_prolonge_min:
+            code = next((l.code for l in lignes if l.id == a.ligne_id), a.ligne_id)
+            message = f"Arrêt ouvert depuis {round(minutes_ouvert / 60, 1)} h sur {code} -- reprise probablement oubliée sur la tablette."
+            if _upsert_alerte_ligne(db, "arret_prolonge", a.ligne_id, "rouge", message):
+                nb_creees += 1
+    # Un arrêt refermé (ou la ligne redevenue saine) résout l'alerte -- pas de faux positif qui traîne.
+    db.query(Alerte).filter(
+        Alerte.type == "arret_prolonge", Alerte.resolue.is_(False), ~Alerte.ligne_id.in_(ids_ouverts) if ids_ouverts else True,
+    ).update({"resolue": True}, synchronize_session=False)
 
     db.commit()
     return nb_creees

@@ -285,7 +285,13 @@ def constituer_equipes(graine: int, ligne_ids: list[int], nb_operateurs: int) ->
     r = random.Random(f"{graine}-equipes")
     ops = []
     for i in range(nb_operateurs):
-        ops.append({"matricule": f"{PREFIXE_MATRICULE}{i + 1:03d}", "nom": f"{r.choice(PRENOMS)} {r.choice(NOMS)} (démo)"})
+        # *** AJOUT 2026-09-25 *** : catégorie de personnel (CDI/CDD/Journalier/Ancien CDI), pour que
+        # l'écran "Performance personnel (CDI/CDD)" ait quelque chose à montrer sur les comptes DEMO --
+        # sans elle, categorie_personnel restait NULL et le classement/regroupement était vide en démo.
+        # Distribution volontairement proche de ce qui s'observe chez SIVOP (majorité CDI/CDD, quelques
+        # Journalier/Ancien CDI) : CHOIX ARBITRAIRE pour la démo, pas une donnée réelle.
+        categorie = r.choices(["CDI", "CDD", "Journalier", "Ancien CDI"], weights=[45, 35, 12, 8])[0]
+        ops.append({"matricule": f"{PREFIXE_MATRICULE}{i + 1:03d}", "nom": f"{r.choice(PRENOMS)} {r.choice(NOMS)} (démo)", "categorie_personnel": categorie})
     equipes = {lid: [o["matricule"] for o in r.sample(ops, min(len(ops), r.choice([2, 3, 3, 4])))] for lid in ligne_ids}
     return ops, equipes
 
@@ -447,17 +453,27 @@ def executer_evenement(api: Api, db, ligne: dict, ev: dict, seq: dict, *, redate
 
 
 def creer_operateurs(api: Api, db, admin: str, ops: list[dict]) -> dict[str, int]:
-    """Comptes fictifs (idempotent : un compte existant est réutilisé)."""
-    ids = {r.matricule: r.id for r in db.execute(text("SELECT id, matricule FROM users WHERE matricule LIKE :p"), {"p": PREFIXE_MATRICULE + "%"})}
+    """Comptes fictifs (idempotent : un compte existant est réutilisé, sa categorie_personnel
+    est resynchronisée si elle a changé -- ex. un compte créé avant l'ajout de ce champ)."""
+    ids = {r.matricule: (r.id, r.categorie_personnel) for r in db.execute(
+        text("SELECT id, matricule, categorie_personnel FROM users WHERE matricule LIKE :p"), {"p": PREFIXE_MATRICULE + "%"})}
     for o in ops:
         if o["matricule"] in ids:
             continue
-        r = api.appel("POST", "/auth/users", admin, json={"nom": o["nom"], "password": MOT_DE_PASSE_DEMO, "matricule": o["matricule"], "user_type": "operateur"})
-        ids[o["matricule"]] = r.json()["id"]
+        r = api.appel("POST", "/auth/users", admin, json={
+            "nom": o["nom"], "password": MOT_DE_PASSE_DEMO, "matricule": o["matricule"], "user_type": "operateur",
+            "categorie_personnel": o.get("categorie_personnel"),
+        })
+        ids[o["matricule"]] = (r.json()["id"], o.get("categorie_personnel"))
+    a_resynchroniser = [o for o in ops if o["matricule"] in ids and o.get("categorie_personnel") and ids[o["matricule"]][1] != o["categorie_personnel"]]
+    if a_resynchroniser:
+        db.execute(text("UPDATE users SET categorie_personnel = :c WHERE id = :i"),
+                   [{"c": o["categorie_personnel"], "i": ids[o["matricule"]][0]} for o in a_resynchroniser])
+        db.commit()
     for o in ops:
         if o["matricule"] not in api.jetons:
             api.login(o["matricule"], MOT_DE_PASSE_DEMO)
-    return ids
+    return {m: uid for m, (uid, _cat) in ids.items()}
 
 
 def affecter_equipes(api: Api, db, admin: str, equipes: dict[int, list[str]], ids: dict[str, int], depuis: datetime) -> int:

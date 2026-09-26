@@ -62,6 +62,7 @@ def main():
     p.add_argument("--bonus-efficacite", type=float, default=1.10, help="multiplie l'efficacité des lignes (défaut 1,10 : une usine qui va plutôt bien ; 1,0 = profils bruts)")
     p.add_argument("--garder-fin-de-poste", action="store_true", help="conserver les opérateurs qui saisissent tout en fin de poste (sinon : saisie régulière)")
     p.add_argument("--sans-attente", action="store_true", help="rejoue seulement le passé de la journée puis s'arrête (tests)")
+    p.add_argument("--vitesse", type=float, default=1.0, help="*** AJOUT 2026-09-25 *** : multiplie la vitesse d'écoulement du temps EN MODE DIRECT (2 = deux fois plus vite, 10 = un après-midi en quelques minutes). Les évènements sont toujours postés à l'heure RÉELLE où ils partent (pas de redatage) -- accélérer déplace donc simplement CE MOMENT plus tôt, ça ne triche pas sur l'horodatage affiché dans l'app. Défaut 1.0 = rythme réel, pensé pour une vraie démo en direct.")
     p.add_argument("--oui", action="store_true")
     a = p.parse_args()
 
@@ -120,12 +121,15 @@ def main():
     # 2. Direct : chaque évènement part à son heure, sans redatage (l'API date « maintenant », c'est la vérité).
     for ts, n, ligne, ev in futur:
         heapq.heappush(fils, (ts, n, "evt", ligne, ev))
-    print("Mode direct (Ctrl-C pour arrêter)...")
+    print("Mode direct (Ctrl-C pour arrêter)..." if a.vitesse == 1.0 else f"Mode direct, x{a.vitesse:g} (Ctrl-C pour arrêter)...")
+    debut_direct = datetime.now()   # *** AJOUT 2026-09-25 *** : ancres pour --vitesse (temps virtuel = temps réel écoulé x vitesse)
     try:
         while fils:
             ts, _n, genre, ligne, ev = fils[0]
-            if ts > datetime.now():
-                tm.sleep(min(2.0, (ts - datetime.now()).total_seconds())); continue
+            virtuel = maintenant + (datetime.now() - debut_direct) * a.vitesse
+            if ts > virtuel:
+                attente = (ts - virtuel).total_seconds() / a.vitesse
+                tm.sleep(min(2.0, max(0.0, attente))); continue
             heapq.heappop(fils)
             if genre == "fin_arret":
                 api.appel("POST", f"/actions/arrets/{ev['arret_id']}/terminer", ev["operateur"])
